@@ -160,7 +160,7 @@ export default function ApprovalsClient({ initialRequests }: { initialRequests: 
                   <p className="text-sm font-medium text-slate-500 truncate">{req.profiles?.student_number || 'No ID assigned'}</p>
                   <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
                     <Clock className="w-3.5 h-3.5" />
-                    {new Date(req.borrowed_date).toLocaleString(undefined, {
+                    {new Date(req.borrowed_date).toLocaleString('en-PH', {
                       month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
                     })}
                   </p>

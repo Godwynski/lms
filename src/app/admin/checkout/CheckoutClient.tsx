@@ -1,9 +1,24 @@
 'use client'
 
 import { useState } from 'react'
+import Image from 'next/image'
 import QRScanner from '@/components/QRScanner'
 import { lookupUser, lookupOrAddBook, processCheckout, processReturn, lookupUserByStudentNumber } from './actions'
 import { UserCheck, Book, AlertCircle, CheckCircle2, CornerDownLeft, ArrowUpFromLine, Hash } from 'lucide-react'
+
+interface Borrower {
+  id: string
+  full_name: string | null
+  role: string
+}
+
+interface BookInfo {
+  id: string
+  isbn: string
+  title: string
+  author?: string | null
+  cover_url?: string | null
+}
 
 export default function CheckoutClient() {
   const [mode, setMode] = useState<'checkout' | 'return'>('checkout')
@@ -12,8 +27,8 @@ export default function CheckoutClient() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const [borrower, setBorrower] = useState<any>(null)
-  const [book, setBook] = useState<any>(null)
+  const [borrower, setBorrower] = useState<Borrower | null>(null)
+  const [book, setBook] = useState<BookInfo | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [studentNumberInput, setStudentNumberInput] = useState('')
   const [isStudentLookupPending, setIsStudentLookupPending] = useState(false)
@@ -36,7 +51,7 @@ export default function CheckoutClient() {
           if (result.error) {
             setError(result.error)
           } else {
-            setBorrower(result.user)
+            setBorrower(result.user ?? null)
             setStep(2)
           }
         } else if (step === 2) {
@@ -66,8 +81,8 @@ export default function CheckoutClient() {
           }
         }
       }
-    } catch (err: any) {
-      setError(err.message || 'An error occurred during scanning')
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'An error occurred during scanning')
     } finally {
       setLoading(false)
     }
@@ -77,6 +92,7 @@ export default function CheckoutClient() {
     setLoading(true)
     setError(null)
     
+    if (!borrower || !book) return
     try {
       if (mode === 'checkout') {
         const result = await processCheckout(borrower.id, book.id)
@@ -93,8 +109,8 @@ export default function CheckoutClient() {
            showSuccess(result.message || 'Return successful!')
         }
       }
-    } catch (err: any) {
-      setError(err.message || `Failed to process ${mode}`)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : `Failed to process ${mode}`)
     } finally {
       setLoading(false)
     }
@@ -230,7 +246,9 @@ export default function CheckoutClient() {
                 {book ? (
                   <div className="flex items-start">
                     {book.cover_url && (
-                      <img src={book.cover_url} alt="Cover" className="w-10 h-14 object-cover rounded shadow shadow-amber-900/10 mr-3" />
+                      <div className="relative w-10 h-14 mr-3 flex-shrink-0">
+                        <Image src={book.cover_url} alt="Cover" fill unoptimized className="object-cover rounded shadow shadow-amber-900/10" />
+                      </div>
                     )}
                     <div>
                       <p className="font-bold text-slate-800 line-clamp-1">{book.title}</p>
@@ -274,7 +292,7 @@ export default function CheckoutClient() {
                                   const res = await lookupUserByStudentNumber(studentNumberInput)
                                   setIsStudentLookupPending(false)
                                   if (res.error) setError(res.error)
-                                  else { setBorrower(res.user); setStep(2) }
+                                  else { setBorrower(res.user ?? null); setStep(2) }
                                 }
                               }}
                               placeholder="Student number (e.g. 2024-0001-MNL)"
@@ -289,7 +307,7 @@ export default function CheckoutClient() {
                               const res = await lookupUserByStudentNumber(studentNumberInput)
                               setIsStudentLookupPending(false)
                               if (res.error) setError(res.error)
-                              else { setBorrower(res.user); setStep(2) }
+                              else { setBorrower(res.user ?? null); setStep(2) }
                             }}
                             className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-sm font-semibold rounded-xl transition-colors shrink-0"
                           >

@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { BookOpen, Users, ScanLine, Search, LayoutDashboard, LogOut, History, Bookmark } from 'lucide-react'
+import { BookOpen, Users, ScanLine, Search, LayoutDashboard, LogOut, History, Bookmark, BookMarked } from 'lucide-react'
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 
@@ -13,13 +13,16 @@ export default async function NavBar() {
 
   let profile = null
   if (user) {
-    const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+    if (error) console.error('NavBar Profile Fetch Error:', error)
     profile = data
   }
+
 
   const role = profile?.role || 'borrower'
   const name = profile?.full_name || user.email?.split('@')[0] || 'User'
   const initial = name.charAt(0).toUpperCase()
+
 
   const handleSignOut = async () => {
     'use server'
@@ -66,6 +69,7 @@ export default async function NavBar() {
               <>
                 <NavLink href="/admin/books" icon={<BookOpen className="w-4 h-4" aria-hidden="true" />} label="Inventory" />
                 <NavLink href="/admin/checkout" icon={<ScanLine className="w-4 h-4" aria-hidden="true" />} label="Checkout Portal" />
+                <NavLink href="/admin/borrowings" icon={<BookMarked className="w-4 h-4" aria-hidden="true" />} label="All Borrowings" />
                 <NavLink href="/admin/approvals" icon={<Bookmark className="w-4 h-4" aria-hidden="true" />} label="Approvals" />
                 <NavLink href="/admin/users" icon={<Users className="w-4 h-4" aria-hidden="true" />} label="Users" />
               </>
@@ -112,6 +116,7 @@ export default async function NavBar() {
           {(role === 'super_admin' || role === 'librarian' || role === 'circulation_assistant') && (
             <>
               <MobileNavLink href="/admin/checkout" icon={<ScanLine className="w-5 h-5" aria-hidden="true" />} label="Checkout" />
+              <MobileNavLink href="/admin/borrowings" icon={<BookMarked className="w-5 h-5" aria-hidden="true" />} label="Borrowings" />
               <MobileNavLink href="/admin/approvals" icon={<Bookmark className="w-5 h-5" aria-hidden="true" />} label="Approvals" />
             </>
           )}

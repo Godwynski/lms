@@ -1,9 +1,23 @@
 'use client'
 
 import { useState, useActionState, useEffect } from 'react'
+import Image from 'next/image'
 import { fetchBookByISBN, addBookToCatalog } from './actions'
 import QRScanner from '@/components/QRScanner'
 import { Search, Plus, Save, X, BookOpen, AlertCircle, CheckCircle2, ScanLine } from 'lucide-react'
+
+interface BookData {
+  isbn: string
+  title: string
+  author?: string
+  publisher?: string
+  publication_year?: number
+  genre?: string
+  page_count?: number
+  language?: string
+  description?: string
+  cover_image_url?: string
+}
 
 export default function AddBookModal() {
   const [isOpen, setIsOpen] = useState(false)
@@ -15,7 +29,7 @@ export default function AddBookModal() {
   const [fetchError, setFetchError] = useState<string | null>(null)
   
   // Phase 2: Form Data
-  const [scannedBook, setScannedBook] = useState<any>(null)
+  const [scannedBook, setScannedBook] = useState<BookData | null>(null)
   
   // Phase 3: Submission Action
   const [state, formAction, isPending] = useActionState(addBookToCatalog, null)
@@ -190,16 +204,13 @@ export default function AddBookModal() {
                         <div className="w-32 shrink-0">
                           {scannedBook.cover_image_url ? (
                             <div className="relative w-full aspect-[2/3] rounded-lg shadow-md border border-slate-200 overflow-hidden bg-slate-100">
-                              {/* Plain img: no hostname restriction like next/image */}
-                              <img
-                                src={scannedBook.cover_image_url}
+                              {/* next/image with unoptimized to support any external book cover domain */}
+                              <Image
+                                src={scannedBook.cover_image_url!}
                                 alt="Cover Preview"
-                                className="w-full h-full object-contain"
-                                onError={(e) => {
-                                  const t = e.currentTarget
-                                  t.style.display = 'none'
-                                  t.parentElement!.innerHTML = '<div class="w-full h-full flex items-center justify-center text-slate-400 text-xs text-center p-2">No Cover<br/>Available</div>'
-                                }}
+                                fill
+                                unoptimized
+                                className="object-contain"
                               />
                             </div>
                           ) : (

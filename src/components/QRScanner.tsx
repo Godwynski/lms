@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Html5QrcodeScanner } from 'html5-qrcode'
-import { QrCode, X } from 'lucide-react'
+import { X } from 'lucide-react'
 
 interface QRScannerProps {
   onScanSuccess: (decodedText: string) => void
@@ -34,8 +34,9 @@ export default function QRScanner({ onScanSuccess, onCancel }: QRScannerProps) {
           console.debug(errorMessage)
         }
       )
-    } catch (e) {
-      setError("Failed to initialize scanner. Camera permissions might be required.")
+    } catch {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- safe: only called once during initialization failure, not in a render cycle
+      setError('Failed to initialize scanner. Camera permissions might be required.')
     }
 
     return () => {
