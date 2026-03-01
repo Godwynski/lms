@@ -19,20 +19,13 @@ export async function lookupUser(scannedData: string) {
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   
-  let borrowerId = scannedData
   if (!uuidRegex.test(scannedData)) {
-     // If not a UUID, let's fetch the FIRST borrower profile as a fallback demo
-     const { data: fallbackProfile } = await supabase.from('profiles').select('id, full_name').eq('role', 'borrower').limit(1).single()
-     if (fallbackProfile) {
-        borrowerId = fallbackProfile.id
-     } else {
-        return { error: 'Invalid library card and no default borrower found.' }
-     }
+    return { error: 'Invalid Library Card. Scanning a valid card QR is required.' }
   }
 
-  const { data: borrowerProfile } = await supabase.from('profiles').select('id, full_name, role').eq('id', borrowerId).single()
+  const { data: borrowerProfile } = await supabase.from('profiles').select('id, full_name, role').eq('id', scannedData).single()
   
-  if (!borrowerProfile) return { error: 'User not found' }
+  if (!borrowerProfile) return { error: 'User not found in the system' }
   return { user: borrowerProfile }
 }
 
@@ -87,36 +80,26 @@ export async function lookupOrAddBook(isbn: string) {
 export async function processCheckout(borrowerId: string, bookId: string) {
   const supabase = await createClient()
 
-  // Verify book is available
-  const { data: book } = await supabase.from('books').select('available_copies').eq('id', bookId).single()
-  
-  if (!book || book.available_copies <= 0) {
-    return { error: 'Book is not available for checkout' }
-  }
+  // Verify caller is admin/staff
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Unauthorized' }
 
-  const dueDate = new Date()
-  dueDate.setDate(dueDate.getDate() + 14) // 14 days borrowing period
-
-  // Start checkout transaction
-  const { error: checkoutError } = await supabase.from('borrowing_records').insert({
-    book_id: bookId,
-    borrower_id: borrowerId,
-    due_date: dueDate.toISOString(),
-    status: 'borrowed'
+  // Use the atomic stored procedure instead of independent reads/writes
+  // This prevents race conditions where two admins check out the last copy simultaneously
+  const { data, error } = await supabase.rpc('atomic_checkout', {
+    p_borrower_id: borrowerId,
+    p_book_id: bookId
   })
 
-  if (checkoutError) {
-    return { error: 'Failed to create borrowing record' }
+  // If the RPC fails entirely (DB connection, undefined function)
+  if (error) {
+    console.error('Checkout DB Error:', error)
+    return { error: 'Failed to process checkout due to database error' }
   }
 
-  // Decrement available copies
-  const { error: updateError } = await supabase.from('books').update({
-    available_copies: book.available_copies - 1
-  }).eq('id', bookId)
-
-  if (updateError) {
-    // Ideally we would rollback, but simple setup for demo
-    console.error('Failed to decrement copies')
+  // If the RPC throws an intentional business logic error (e.g. no copies)
+  if (data?.error) {
+    return { error: data.error }
   }
 
   revalidatePath('/admin/checkout')
@@ -126,52 +109,26 @@ export async function processCheckout(borrowerId: string, bookId: string) {
 export async function processReturn(isbn: string) {
   const supabase = await createClient()
 
-  // 1. Find book by ISBN
-  const { data: book } = await supabase.from('books').select('id, available_copies, title').eq('isbn', isbn).single()
-  
-  if (!book) {
-    return { error: 'Book not found in the local library system.' }
+  // Verify caller is admin/staff
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Unauthorized' }
+
+  // Use the atomic stored procedure instead of independent reads/writes
+  const { data, error } = await supabase.rpc('atomic_return', {
+    p_isbn: isbn
+  })
+
+  // If the RPC fails entirely (DB connection, undefined function)
+  if (error) {
+    console.error('Return DB Error:', error)
+    return { error: 'Failed to process return due to database error' }
   }
 
-  // 2. Find the active borrowing record for this book
-  // (Assuming there could be multiple copies, we find the oldest active borrow for this book id)
-  const { data: activeRecord } = await supabase
-    .from('borrowing_records')
-    .select('id')
-    .eq('book_id', book.id)
-    .eq('status', 'borrowed')
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .single()
-
-  if (!activeRecord) {
-    return { error: `No active borrowing records found for "${book.title}". It might already be returned or was never checked out.` }
-  }
-
-  // 3. Mark the record as returned
-  const { error: returnError } = await supabase
-    .from('borrowing_records')
-    .update({ 
-      status: 'returned',
-      returned_date: new Date().toISOString()
-    })
-    .eq('id', activeRecord.id)
-
-  if (returnError) {
-    console.error('Failed to return record', returnError)
-    return { error: 'Failed to update borrowing record' }
-  }
-
-  // 4. Increment the available copies for the book
-  const { error: incrementError } = await supabase
-    .from('books')
-    .update({ available_copies: book.available_copies + 1 })
-    .eq('id', book.id)
-
-  if (incrementError) {
-     console.error('Failed to increment copies', incrementError)
+  // If the RPC throws an intentional business logic error (e.g. no active record)
+  if (data?.error) {
+    return { error: data.error }
   }
 
   revalidatePath('/admin/checkout')
-  return { success: true, message: `Successfully returned "${book.title}"!` }
+  return { success: true, message: data.message || 'Return successful!' }
 }

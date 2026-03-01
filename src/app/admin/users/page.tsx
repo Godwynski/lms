@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { redirect } from 'next/navigation'
 import UsersClient from './UsersClient'
 
@@ -16,16 +17,40 @@ export default async function UsersPage() {
     redirect('/')
   }
 
-  // 3. Fetch Data for Table
-  // Sorting by created_at descending (newest first)
-  const { data: profiles, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .order('created_at', { ascending: true })
+  // 3. Fetch ALL auth users via the Admin API (Service Role) — this is authoritative
+  const supabaseAdmin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  )
 
-  if (error) {
-    console.error('Failed to load profiles:', error)
+  const { data: { users: authUsers }, error: authError } = await supabaseAdmin.auth.admin.listUsers({
+    perPage: 1000,
+  })
+  
+  if (authError) {
+    console.error('Failed to load auth users:', authError)
   }
+
+  // 4. Also fetch profiles for extra info (role, full_name)
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('id, full_name, role, email, created_at')
+
+  const profileMap = new Map((profiles || []).map(p => [p.id, p]))
+
+  // 5. Merge: for every auth user, attach profile data (or defaults)
+  const mergedUsers = (authUsers || []).map(authUser => {
+    const p = profileMap.get(authUser.id)
+    return {
+      id: authUser.id,
+      email: authUser.email || '',
+      full_name: p?.full_name || authUser.user_metadata?.full_name || null,
+      role: p?.role || authUser.user_metadata?.role || 'borrower',
+      created_at: authUser.created_at,
+      last_sign_in_at: authUser.last_sign_in_at || null,
+    }
+  })
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 sm:p-12">
@@ -35,7 +60,7 @@ export default async function UsersPage() {
       </div>
 
       <div className="relative z-10 w-full max-w-7xl mx-auto">
-         <UsersClient profiles={profiles || []} currentUserRole={profile.role} />
+         <UsersClient profiles={mergedUsers} currentUserRole={profile.role} />
       </div>
     </div>
   )

@@ -1,166 +1,449 @@
 import { createClient } from '@/utils/supabase/server'
 import Link from 'next/link'
-import { BookOpen, Users, ShieldAlert, ScanLine, Search, Settings } from 'lucide-react'
+import {
+  BookOpen, Users, ScanLine, Search, BookMarked,
+  AlertTriangle, TrendingUp, Clock, ArrowRight,
+  Package, BarChart2, ShieldCheck, CalendarDays
+} from 'lucide-react'
+import Image from 'next/image'
+
+// Stat card component
+function StatCard({
+  label, value, sub, icon: Icon, color
+}: {
+  label: string
+  value: string | number
+  sub?: string
+  icon: React.ElementType
+  color: string
+}) {
+  const colors: Record<string, string> = {
+    indigo: 'bg-indigo-50 text-indigo-600 border-indigo-100',
+    emerald: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+    rose: 'bg-rose-50 text-rose-600 border-rose-100',
+    amber: 'bg-amber-50 text-amber-600 border-amber-100',
+    blue: 'bg-blue-50 text-blue-600 border-blue-100',
+    violet: 'bg-violet-50 text-violet-600 border-violet-100',
+  }
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 flex items-start gap-4">
+      <div className={`w-11 h-11 rounded-xl flex items-center justify-center border ${colors[color]}`}>
+        <Icon className="w-5 h-5" />
+      </div>
+      <div>
+        <p className="text-sm text-slate-500 font-medium">{label}</p>
+        <p className="text-2xl font-extrabold text-slate-900 leading-tight">{value}</p>
+        {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
+      </div>
+    </div>
+  )
+}
+
+// Role badge
+function RoleBadge({ role }: { role: string }) {
+  const map: Record<string, string> = {
+    super_admin: 'bg-rose-100 text-rose-700 border-rose-200',
+    librarian: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+    circulation_assistant: 'bg-blue-100 text-blue-700 border-blue-200',
+    borrower: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  }
+  return (
+    <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border ${map[role] || 'bg-slate-100 text-slate-600'}`}>
+      {role.replace(/_/g, ' ')}
+    </span>
+  )
+}
 
 export default async function Home() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  
+
   let profile = null
   if (user) {
     const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single()
     profile = data
   }
 
-  const role = profile?.role || 'borrower' // default to borrower
+  const role = profile?.role || 'borrower'
+  const isStaff = ['super_admin', 'librarian', 'circulation_assistant'].includes(role)
+  const isAdmin = ['super_admin', 'librarian'].includes(role)
+
+  // ── Fetch stats based on role ──────────────────────────────────────────
+  let totalBooks = 0, totalCopies = 0, availableCopies = 0
+  let activeBorrowings = 0, overdueCount = 0, totalBorrowers = 0
+  let recentActivity: { id: string; title: string; borrower: string; status: string; date: string }[] = []
+  let myBorrowings: { id: string; book_id: string; title: string; cover: string | null; due_date: string; status: string }[] = []
+  let dueSoonCount = 0
+
+  if (user && isStaff) {
+    const [booksRes, borrowingsRes, profilesRes] = await Promise.all([
+      supabase.from('books').select('total_copies, available_copies'),
+      supabase.from('borrowing_records').select('id, status, due_date'),
+      supabase.from('profiles').select('id, role').eq('role', 'borrower'),
+    ])
+
+    totalBooks = booksRes.data?.length || 0
+    totalCopies = booksRes.data?.reduce((s, b) => s + (b.total_copies || 0), 0) || 0
+    availableCopies = booksRes.data?.reduce((s, b) => s + (b.available_copies || 0), 0) || 0
+    activeBorrowings = borrowingsRes.data?.filter(r => r.status === 'borrowed').length || 0
+    overdueCount = borrowingsRes.data?.filter(r => {
+      if (r.status !== 'borrowed') return false
+      return new Date(r.due_date) < new Date()
+    }).length || 0
+    totalBorrowers = profilesRes.data?.length || 0
+
+    // Recent borrowings with book titles
+    const { data: recent } = await supabase
+      .from('borrowing_records')
+      .select('id, status, borrowed_date, books(title), profiles(full_name, email)')
+      .order('borrowed_date', { ascending: false })
+      .limit(6)
+
+    recentActivity = (recent || []).map((r: any) => ({
+      id: r.id,
+      title: r.books?.title || 'Unknown Book',
+      borrower: r.profiles?.full_name || r.profiles?.email || 'Unknown',
+      status: r.status,
+      date: r.borrowed_date,
+    }))
+  }
+
+  if (user && role === 'borrower') {
+    const { data: borrows } = await supabase
+      .from('borrowing_records')
+      .select('id, book_id, due_date, status, books(title, cover_image_url)')
+      .eq('borrower_id', user.id)
+      .eq('status', 'borrowed')
+      .order('due_date', { ascending: true })
+
+    myBorrowings = (borrows || []).map((b: any) => ({
+      id: b.id,
+      book_id: b.book_id,
+      title: b.books?.title || 'Unknown Book',
+      cover: b.books?.cover_image_url || null,
+      due_date: b.due_date,
+      status: b.status,
+    }))
+
+    const threeDaysFromNow = new Date()
+    threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3)
+    dueSoonCount = myBorrowings.filter(b => new Date(b.due_date) <= threeDaysFromNow).length
+  }
+
+  const greeting = () => {
+    const h = new Date().getHours()
+    if (h < 12) return 'Good morning'
+    if (h < 18) return 'Good afternoon'
+    return 'Good evening'
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-indigo-500/30">
-      {/* Dynamic Background */}
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      {/* Background */}
       <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-200/40 blur-[120px]" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-blue-200/40 blur-[120px]" />
+        <div className="absolute top-[-10%] left-[-5%] w-[45%] h-[45%] rounded-full bg-indigo-200/30 blur-[120px]" />
+        <div className="absolute bottom-[-10%] right-[-5%] w-[45%] h-[45%] rounded-full bg-blue-200/30 blur-[120px]" />
       </div>
 
-      <main className="relative z-10 flex flex-col items-center justify-center min-h-screen p-6 sm:p-12 md:p-24">
-        <div className="w-full max-w-2xl p-8 backdrop-blur-xl bg-white/70 border border-slate-200 rounded-[2rem] shadow-xl transition-all duration-500 hover:shadow-indigo-500/10 hover:border-indigo-100">
-          <div className="flex flex-col items-center text-center space-y-6">
-            
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-500 to-blue-500 flex items-center justify-center p-0.5 shadow-lg shadow-indigo-500/30">
-              <div className="w-full h-full bg-white rounded-[14px] flex items-center justify-center">
-                <BookOpen className="w-7 h-7 text-indigo-500" />
+      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-16">
+
+        {!user ? (
+          // ── LOGGED OUT: Landing ──────────────────────────────────────────
+          <div className="flex flex-col items-center justify-center min-h-[80vh] text-center space-y-8">
+            <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-indigo-500 to-blue-500 flex items-center justify-center shadow-2xl shadow-indigo-500/30">
+              <BookOpen className="w-10 h-10 text-white" />
+            </div>
+            <div className="space-y-3">
+              <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-blue-600">
+                Library Management System
+              </h1>
+              <p className="text-lg text-slate-500 max-w-md mx-auto">
+                Your next-generation digital library portal — search, borrow, and manage with ease.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl w-full text-left">
+              {[
+                { icon: Search, color: 'bg-indigo-50 text-indigo-600', title: 'Smart Catalog', desc: 'Search thousands of books, resources, and media instantly.' },
+                { icon: ScanLine, color: 'bg-emerald-50 text-emerald-600', title: 'QR Checkout', desc: 'Borrow and return books with your digital library card.' },
+                { icon: TrendingUp, color: 'bg-rose-50 text-rose-600', title: 'Real-time Tracking', desc: 'Track due dates and borrowing history anytime.' },
+              ].map(({ icon: Icon, color, title, desc }) => (
+                <div key={title} className="bg-white/70 backdrop-blur-sm border border-slate-100 rounded-2xl p-5 shadow-sm">
+                  <div className={`w-10 h-10 rounded-xl ${color} flex items-center justify-center mb-3`}>
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <h3 className="font-bold text-slate-800 mb-1">{title}</h3>
+                  <p className="text-sm text-slate-500">{desc}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3 w-full max-w-sm">
+              <Link href="/login" className="flex-1 flex items-center justify-center py-3.5 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition-all shadow-lg shadow-indigo-500/30 active:scale-95">
+                Login to Portal
+              </Link>
+              <Link href="/register" className="flex-1 flex items-center justify-center py-3.5 px-6 rounded-xl bg-white border-2 border-slate-200 hover:border-indigo-200 text-slate-700 font-bold transition-all active:scale-95">
+                Get Library Card
+              </Link>
+            </div>
+          </div>
+        ) : (
+          // ── LOGGED IN ────────────────────────────────────────────────────
+          <div className="space-y-8">
+
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <p className="text-sm text-slate-500 font-medium">{greeting()},</p>
+                <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+                  {profile?.full_name || user.email?.split('@')[0]}
+                </h1>
+                <p className="text-xs text-slate-400 mt-0.5">{user.email}</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <RoleBadge role={role} />
+                <form action="/auth/signout" method="post">
+                  <button className="text-sm text-slate-500 hover:text-slate-800 font-semibold px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+                    Sign Out
+                  </button>
+                </form>
               </div>
             </div>
 
-            <div className="space-y-2">
-              <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-blue-600">
-                Library Management System
-              </h1>
-              <p className="text-sm text-slate-500 font-medium">
-                Next-generation portal
-              </p>
-            </div>
+            {/* ── STAFF: Alert banner for overdue ── */}
+            {isStaff && overdueCount > 0 && (
+              <div className="flex items-center gap-3 px-5 py-3.5 bg-rose-50 border border-rose-200 rounded-2xl">
+                <AlertTriangle className="w-5 h-5 text-rose-500 shrink-0" />
+                <p className="text-sm font-semibold text-rose-700">
+                  {overdueCount} book{overdueCount > 1 ? 's are' : ' is'} currently overdue. 
+                  <Link href="/admin/checkout" className="ml-2 underline font-bold">Review now →</Link>
+                </p>
+              </div>
+            )}
 
-            <div className="w-full pt-4 space-y-4">
-              {user ? (
-                <div className="space-y-6">
-                  <div className="w-full p-6 text-left rounded-2xl bg-slate-100/50 border border-slate-200/60 flex items-start justify-between">
-                    <div>
-                      <p className="text-sm text-slate-500 font-medium">Logged in as</p>
-                      <h3 className="text-lg font-bold text-slate-800">{profile?.full_name || user.email}</h3>
-                      <p className="text-xs text-slate-400 mt-1">{user.email}</p>
-                    </div>
-                    <div className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold uppercase tracking-wider border border-indigo-200">
-                      {role}
-                    </div>
-                  </div>
+            {/* ── BORROWER: Due soon alert ── */}
+            {role === 'borrower' && dueSoonCount > 0 && (
+              <div className="flex items-center gap-3 px-5 py-3.5 bg-amber-50 border border-amber-200 rounded-2xl">
+                <Clock className="w-5 h-5 text-amber-500 shrink-0" />
+                <p className="text-sm font-semibold text-amber-700">
+                  {dueSoonCount} book{dueSoonCount > 1 ? 's are' : ' is'} due within 3 days. Please return them soon!
+                </p>
+              </div>
+            )}
 
-                  {/* Role based dashboard sections */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
-                    {(role === 'super_admin' || role === 'librarian') && (
-                      <>
-                        <Link href="/admin/system" className="block p-4 rounded-xl border border-rose-100 bg-rose-50/50 hover:bg-rose-50 transition-colors cursor-pointer group shadow-sm hover:shadow-rose-500/10">
-                          <ShieldAlert className="w-6 h-6 text-rose-500 mb-2 group-hover:scale-110 transition-transform" />
-                          <h4 className="font-semibold text-rose-900">System Management</h4>
-                          <p className="text-xs text-rose-600/80">Manage users, roles, and global settings</p>
-                        </Link>
-                        <Link href="/admin/settings" className="block p-4 rounded-xl border border-indigo-100 bg-indigo-50/50 hover:bg-indigo-50 transition-colors cursor-pointer group shadow-sm hover:shadow-indigo-500/10">
-                          <Settings className="w-6 h-6 text-indigo-500 mb-2 group-hover:scale-110 transition-transform" />
-                          <h4 className="font-semibold text-indigo-900">Library Configuration</h4>
-                          <p className="text-xs text-indigo-600/80">Branches, operating hours, policies</p>
-                        </Link>
-                      </>
-                    )}
+            {/* ── STAFF: Stats Grid ── */}
+            {isStaff && (
+              <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                <StatCard label="Total Titles" value={totalBooks} sub={`${totalCopies} copies`} icon={BookOpen} color="indigo" />
+                <StatCard label="Available" value={availableCopies} sub="copies on shelf" icon={Package} color="emerald" />
+                <StatCard label="Checked Out" value={totalCopies - availableCopies} sub="currently borrowed" icon={BookMarked} color="blue" />
+                <StatCard label="Overdue" value={overdueCount} sub="need follow-up" icon={AlertTriangle} color="rose" />
+                <StatCard label="Active Loans" value={activeBorrowings} sub="total records" icon={BarChart2} color="violet" />
+                <StatCard label="Borrowers" value={totalBorrowers} sub="registered users" icon={Users} color="amber" />
+              </div>
+            )}
 
-                    {(role === 'super_admin' || role === 'librarian' || role === 'circulation_assistant') && (
-                      <>
-                        <Link href="/admin/checkout" className="block p-4 rounded-xl border border-emerald-100 bg-emerald-50/50 hover:bg-emerald-50 transition-colors cursor-pointer group shadow-sm hover:shadow-emerald-500/10">
-                          <ScanLine className="w-6 h-6 text-emerald-500 mb-2 group-hover:scale-110 transition-transform" />
-                          <h4 className="font-semibold text-emerald-900">Checkout / Return</h4>
-                          <p className="text-xs text-emerald-600/80">Scan books or user ID cards</p>
-                        </Link>
-                        <Link href="/admin/users" className="block p-4 rounded-xl border border-blue-100 bg-blue-50/50 hover:bg-blue-50 transition-colors cursor-pointer group shadow-sm hover:shadow-blue-500/10">
-                          <Users className="w-6 h-6 text-blue-500 mb-2 group-hover:scale-110 transition-transform" />
-                          <h4 className="font-semibold text-blue-900">User Management</h4>
-                          <p className="text-xs text-blue-600/80">Manage borrowers and fines</p>
-                        </Link>
-                      </>
-                    )}
+            {/* ── Quick Actions ── */}
+            <div>
+              <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3">Quick Actions</h2>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
 
-                    {(role === 'borrower') && (
-                      <>
-                        <Link href="/catalog" className="block p-4 rounded-xl border border-amber-100 bg-amber-50/50 hover:bg-amber-50 transition-colors cursor-pointer group shadow-sm hover:shadow-amber-500/10">
-                          <Search className="w-6 h-6 text-amber-500 mb-2 group-hover:scale-110 transition-transform" />
-                          <h4 className="font-semibold text-amber-900">Search Catalog</h4>
-                          <p className="text-xs text-amber-600/80">Find books, media, and resources</p>
-                        </Link>
-                        <Link href="/borrowings" className="block p-4 rounded-xl border border-teal-100 bg-teal-50/50 hover:bg-teal-50 transition-colors cursor-pointer group shadow-sm hover:shadow-teal-500/10">
-                          <BookOpen className="w-6 h-6 text-teal-500 mb-2 group-hover:scale-110 transition-transform" />
-                          <h4 className="font-semibold text-teal-900">My Borrowings</h4>
-                          <p className="text-xs text-teal-600/80">View checked out items and due dates</p>
-                        </Link>
-                      </>
-                    )}
-                  </div>
-
-                  <form action="/auth/signout" method="post" className="pt-2">
-                    <button
-                      type="submit"
-                      className="flex w-full items-center justify-center py-3.5 px-4 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold transition-all duration-200 active:scale-[0.98]"
-                    >
-                      Sign Out
-                    </button>
-                  </form>
-                </div>
-              ) : (
-                <div className="w-full space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="p-5 rounded-2xl border border-indigo-100/50 bg-gradient-to-br from-indigo-50/50 to-white hover:shadow-lg hover:shadow-indigo-500/10 transition-all duration-300 group">
-                      <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center mb-3 group-hover:scale-110 group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                {/* Borrower actions */}
+                {role === 'borrower' && (
+                  <>
+                    <Link href="/catalog" className="group bg-white border border-slate-100 hover:border-indigo-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col gap-2">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors">
                         <Search className="w-5 h-5" />
                       </div>
-                      <h3 className="font-bold text-slate-800 mb-1">Smart Catalog</h3>
-                      <p className="text-sm text-slate-500">Search thousands of books, resources, and media instantly from your phone.</p>
-                    </div>
+                      <p className="font-bold text-slate-800">Search Catalog</p>
+                      <p className="text-xs text-slate-500">Find books & resources</p>
+                    </Link>
+                    <Link href="/catalog" className="group bg-white border border-slate-100 hover:border-emerald-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col gap-2">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                        <BookOpen className="w-5 h-5" />
+                      </div>
+                      <p className="font-bold text-slate-800">Browse Books</p>
+                      <p className="text-xs text-slate-500">Discover new reads</p>
+                    </Link>
+                  </>
+                )}
 
-                    <div className="p-5 rounded-2xl border border-emerald-100/50 bg-gradient-to-br from-emerald-50/50 to-white hover:shadow-lg hover:shadow-emerald-500/10 transition-all duration-300 group">
-                      <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center mb-3 group-hover:scale-110 group-hover:bg-emerald-600 group-hover:text-white transition-all">
+                {/* Circulation + Admin actions */}
+                {isStaff && (
+                  <>
+                    <Link href="/admin/checkout" className="group bg-white border border-slate-100 hover:border-emerald-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col gap-2">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors">
                         <ScanLine className="w-5 h-5" />
                       </div>
-                      <h3 className="font-bold text-slate-800 mb-1">QR Checkout</h3>
-                      <p className="text-sm text-slate-500">Use your digital library card to borrow and return books in seconds.</p>
-                    </div>
-
-                    <div className="p-5 rounded-2xl border border-rose-100/50 bg-gradient-to-br from-rose-50/50 to-white hover:shadow-lg hover:shadow-rose-500/10 transition-all duration-300 group md:col-span-2">
-                      <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center mb-3 group-hover:scale-110 group-hover:bg-rose-600 group-hover:text-white transition-all">
-                        <ShieldAlert className="w-5 h-5" />
+                      <p className="font-bold text-slate-800">Checkout / Return</p>
+                      <p className="text-xs text-slate-500">Scan books & library cards</p>
+                    </Link>
+                    <Link href="/catalog" className="group bg-white border border-slate-100 hover:border-indigo-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col gap-2">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                        <Search className="w-5 h-5" />
                       </div>
-                      <h3 className="font-bold text-slate-800 mb-1">Real-time Tracking</h3>
-                      <p className="text-sm text-slate-500">Track your current borrowings, due dates, and monitor your account standing directly from the dashboard.</p>
-                    </div>
-                  </div>
+                      <p className="font-bold text-slate-800">Catalog</p>
+                      <p className="text-xs text-slate-500">Browse all books</p>
+                    </Link>
+                  </>
+                )}
 
-                  <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-slate-100">
-                    <Link 
-                      href="/login" 
-                      className="flex-1 flex items-center justify-center py-4 px-6 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold transition-all duration-200 shadow-xl shadow-slate-900/20 active:scale-[0.98]"
-                    >
-                      Login to Portal
+                {/* Admin-only actions */}
+                {isAdmin && (
+                  <>
+                    <Link href="/admin/books" className="group bg-white border border-slate-100 hover:border-violet-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col gap-2">
+                      <div className="w-10 h-10 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center group-hover:bg-violet-600 group-hover:text-white transition-colors">
+                        <BookMarked className="w-5 h-5" />
+                      </div>
+                      <p className="font-bold text-slate-800">Inventory</p>
+                      <p className="text-xs text-slate-500">Manage book catalog</p>
                     </Link>
-                    <Link 
-                      href="/register" 
-                      className="flex-1 flex items-center justify-center py-4 px-6 rounded-2xl bg-white hover:bg-slate-50 text-slate-700 text-sm font-bold border-2 border-slate-100 transition-all duration-200 hover:border-slate-200 active:scale-[0.98]"
-                    >
-                      Get Library Card
+                    <Link href="/admin/users" className="group bg-white border border-slate-100 hover:border-blue-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col gap-2">
+                      <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                        <Users className="w-5 h-5" />
+                      </div>
+                      <p className="font-bold text-slate-800">Users</p>
+                      <p className="text-xs text-slate-500">Manage library accounts</p>
                     </Link>
+                  </>
+                )}
+
+                {role === 'super_admin' && (
+                  <div className="group bg-white border border-slate-100 hover:border-rose-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col gap-2 cursor-default opacity-60">
+                    <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-500 flex items-center justify-center">
+                      <ShieldCheck className="w-5 h-5" />
+                    </div>
+                    <p className="font-bold text-slate-800">System Settings</p>
+                    <p className="text-xs text-slate-400">Coming soon</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── STAFF: Recent Activity ── */}
+            {isStaff && recentActivity.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Recent Borrowings</h2>
+                  <Link href="/admin/checkout" className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                    View All <ArrowRight className="w-3 h-3" />
+                  </Link>
+                </div>
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-100">
+                          <th className="px-5 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wide">Book</th>
+                          <th className="px-5 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wide">Borrower</th>
+                          <th className="px-5 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wide">Status</th>
+                          <th className="px-5 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wide hidden sm:table-cell">Date</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {recentActivity.map((r) => (
+                          <tr key={r.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="px-5 py-3.5 font-medium text-slate-900 max-w-[180px] truncate">{r.title}</td>
+                            <td className="px-5 py-3.5 text-slate-600 max-w-[140px] truncate">{r.borrower}</td>
+                            <td className="px-5 py-3.5">
+                              <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-bold capitalize ${
+                                r.status === 'borrowed' ? 'bg-blue-100 text-blue-700' :
+                                r.status === 'returned' ? 'bg-emerald-100 text-emerald-700' :
+                                'bg-rose-100 text-rose-700'
+                              }`}>
+                                {r.status}
+                              </span>
+                            </td>
+                            <td className="px-5 py-3.5 text-slate-400 text-xs hidden sm:table-cell">
+                              {new Date(r.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
+
+            {/* ── BORROWER: My Active Borrowings ── */}
+            {role === 'borrower' && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider">
+                    My Active Borrowings
+                    {myBorrowings.length > 0 && (
+                      <span className="ml-2 text-indigo-600">({myBorrowings.length})</span>
+                    )}
+                  </h2>
+                  <Link href="/catalog" className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                    Browse Catalog <ArrowRight className="w-3 h-3" />
+                  </Link>
+                </div>
+                {myBorrowings.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-10 text-center">
+                    <BookOpen className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                    <p className="text-slate-500 font-medium">No active borrowings</p>
+                    <p className="text-sm text-slate-400 mt-1">Head to the catalog to find your next book!</p>
+                    <Link href="/catalog" className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-colors">
+                      <Search className="w-4 h-4" /> Browse Books
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {myBorrowings.map((b) => {
+                      const due = new Date(b.due_date)
+                      const now = new Date()
+                      const daysLeft = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+                      const isOverdue = daysLeft < 0
+                      const isDueSoon = !isOverdue && daysLeft <= 3
+                      return (
+                        <div key={b.id} className={`bg-white border rounded-2xl shadow-sm overflow-hidden flex gap-4 p-4 ${
+                          isOverdue ? 'border-rose-200' : isDueSoon ? 'border-amber-200' : 'border-slate-100'
+                        }`}>
+                          <div className="relative w-14 h-20 shrink-0 rounded-lg overflow-hidden bg-slate-100 border border-slate-200">
+                            {b.cover ? (
+                              <Image src={b.cover} alt={b.title} fill className="object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center">
+                                <BookOpen className="w-6 h-6 text-slate-300" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-slate-900 text-sm leading-tight truncate">{b.title}</p>
+                            <div className={`mt-2 flex items-center gap-1.5 text-xs font-semibold ${
+                              isOverdue ? 'text-rose-600' : isDueSoon ? 'text-amber-600' : 'text-slate-500'
+                            }`}>
+                              <CalendarDays className="w-3.5 h-3.5 shrink-0" />
+                              {isOverdue
+                                ? `Overdue by ${Math.abs(daysLeft)}d`
+                                : daysLeft === 0
+                                ? 'Due today!'
+                                : `Due in ${daysLeft} day${daysLeft > 1 ? 's' : ''}`}
+                            </div>
+                            <p className="text-[11px] text-slate-400 mt-0.5">
+                              {due.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── STAFF: Empty state if no borrowings ── */}
+            {isStaff && recentActivity.length === 0 && (
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-10 text-center">
+                <BarChart2 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <p className="text-slate-500 font-medium">No borrowing records yet</p>
+                <p className="text-sm text-slate-400 mt-1">Activity will appear here once books are checked out.</p>
+              </div>
+            )}
+
           </div>
-        </div>
+        )}
       </main>
     </div>
   )
 }
-

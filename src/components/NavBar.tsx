@@ -54,6 +54,7 @@ export default async function NavBar() {
 
             {(role === 'super_admin' || role === 'librarian' || role === 'circulation_assistant') && (
               <>
+                <NavLink href="/admin/books" icon={<BookOpen className="w-4 h-4" />} label="Inventory" />
                 <NavLink href="/admin/checkout" icon={<ScanLine className="w-4 h-4" />} label="Checkout Portal" />
                 <NavLink href="/admin/users" icon={<Users className="w-4 h-4" />} label="Users" />
               </>
