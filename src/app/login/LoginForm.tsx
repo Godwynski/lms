@@ -1,10 +1,12 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { login } from './actions'
-import { Mail, Lock, MoveRight, HelpCircle, AlertCircle } from 'lucide-react'
+import { Mail, Lock, MoveRight, HelpCircle, AlertCircle, Eye, EyeOff } from 'lucide-react'
 
 export default function LoginForm({ errorParams }: { errorParams?: string }) {
+  const [showPassword, setShowPassword] = useState(false)
   return (
     <div className="w-full max-w-md space-y-8 backdrop-blur-2xl bg-white/80 p-6 sm:p-10 border border-slate-200/50 rounded-[2rem] shadow-2xl relative z-10 transition-all">
       <div className="absolute top-0 right-0 p-6 hidden sm:block">
@@ -85,12 +87,24 @@ export default function LoginForm({ errorParams }: { errorParams?: string }) {
             <input
               id="password"
               name="password"
-              type="password"
+              type={showPassword ? "text" : "password"}
               autoComplete="current-password"
               required
-              className="appearance-none block w-full pl-12 pr-4 py-3.5 border-2 border-slate-100 placeholder-slate-400 text-slate-900 rounded-2xl focus:outline-none focus:ring-0 focus:border-indigo-500 bg-slate-50/50 focus:bg-white sm:text-sm font-medium transition-all"
+              className="appearance-none block w-full pl-12 pr-12 py-3.5 border-2 border-slate-100 placeholder-slate-400 text-slate-900 rounded-2xl focus:outline-none focus:ring-0 focus:border-indigo-500 bg-slate-50/50 focus:bg-white sm:text-sm font-medium transition-all"
               placeholder="Password"
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-indigo-500 transition-colors focus:outline-none"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? (
+                <EyeOff className="w-5 h-5 focus-visible:ring-2 focus-visible:ring-indigo-500 rounded-full" />
+              ) : (
+                <Eye className="w-5 h-5 focus-visible:ring-2 focus-visible:ring-indigo-500 rounded-full" />
+              )}
+            </button>
           </div>
         </div>
 

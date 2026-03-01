@@ -1,7 +1,7 @@
 -- Run this in the Supabase SQL Editor
 -- This creates a stored procedure to safely check out a book
 
-CREATE OR REPLACE FUNCTION atomic_checkout(p_borrower_id UUID, p_book_id UUID)
+CREATE OR REPLACE FUNCTION atomic_checkout(p_borrower_id UUID, p_book_id UUID, p_status TEXT DEFAULT 'borrowed')
 RETURNS JSON AS $$
 DECLARE
   v_available_copies INT;
@@ -24,7 +24,7 @@ BEGIN
 
   -- 4. Insert borrowing record
   INSERT INTO public.borrowing_records (book_id, borrower_id, due_date, status)
-  VALUES (p_book_id, p_borrower_id, v_due_date, 'borrowed')
+  VALUES (p_book_id, p_borrower_id, v_due_date, p_status)
   RETURNING id INTO v_record_id;
 
   -- 5. Decrement available copies

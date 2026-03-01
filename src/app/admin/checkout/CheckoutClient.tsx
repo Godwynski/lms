@@ -2,8 +2,8 @@
 
 import { useState } from 'react'
 import QRScanner from '@/components/QRScanner'
-import { lookupUser, lookupOrAddBook, processCheckout, processReturn } from './actions'
-import { UserCheck, Book, AlertCircle, CheckCircle2, ArrowRight, CornerDownLeft, ArrowUpFromLine } from 'lucide-react'
+import { lookupUser, lookupOrAddBook, processCheckout, processReturn, lookupUserByStudentNumber } from './actions'
+import { UserCheck, Book, AlertCircle, CheckCircle2, CornerDownLeft, ArrowUpFromLine, Hash } from 'lucide-react'
 
 export default function CheckoutClient() {
   const [mode, setMode] = useState<'checkout' | 'return'>('checkout')
@@ -15,6 +15,8 @@ export default function CheckoutClient() {
   const [borrower, setBorrower] = useState<any>(null)
   const [book, setBook] = useState<any>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const [studentNumberInput, setStudentNumberInput] = useState('')
+  const [isStudentLookupPending, setIsStudentLookupPending] = useState(false)
 
   const toggleMode = (newMode: 'checkout' | 'return') => {
     setMode(newMode)
@@ -112,6 +114,7 @@ export default function CheckoutClient() {
     setSuccessMsg(null)
     setError(null)
     setIsScanning(false)
+    setStudentNumberInput('')
   }
 
   return (
@@ -247,9 +250,53 @@ export default function CheckoutClient() {
                 {mode === 'checkout' ? (
                   <>
                     {step === 1 && (
-                      <button onClick={() => setIsScanning(true)} disabled={loading} className="w-full flex justify-center items-center py-4 px-6 rounded-2xl text-white bg-indigo-600 hover:bg-indigo-700 text-lg font-bold shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98] disabled:opacity-50">
-                        Scan Library Card
-                      </button>
+                      <div className="space-y-3 w-full">
+                        <button onClick={() => setIsScanning(true)} disabled={loading} className="w-full flex justify-center items-center py-4 px-6 rounded-2xl text-white bg-indigo-600 hover:bg-indigo-700 text-lg font-bold shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98] disabled:opacity-50">
+                          Scan Library Card QR
+                        </button>
+                        {/* Manual fallback: student number */}
+                        <div className="flex items-center gap-3 pt-1">
+                          <div className="h-px flex-1 bg-slate-200" />
+                          <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">or enter manually</span>
+                          <div className="h-px flex-1 bg-slate-200" />
+                        </div>
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <Hash className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                            <input
+                              type="text"
+                              value={studentNumberInput}
+                              onChange={(e) => setStudentNumberInput(e.target.value)}
+                              onKeyDown={async (e) => {
+                                if (e.key === 'Enter' && studentNumberInput.trim()) {
+                                  setIsStudentLookupPending(true)
+                                  setError(null)
+                                  const res = await lookupUserByStudentNumber(studentNumberInput)
+                                  setIsStudentLookupPending(false)
+                                  if (res.error) setError(res.error)
+                                  else { setBorrower(res.user); setStep(2) }
+                                }
+                              }}
+                              placeholder="Student number (e.g. 2024-0001-MNL)"
+                              className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 rounded-xl text-sm transition-all"
+                            />
+                          </div>
+                          <button
+                            disabled={isStudentLookupPending || !studentNumberInput.trim()}
+                            onClick={async () => {
+                              setIsStudentLookupPending(true)
+                              setError(null)
+                              const res = await lookupUserByStudentNumber(studentNumberInput)
+                              setIsStudentLookupPending(false)
+                              if (res.error) setError(res.error)
+                              else { setBorrower(res.user); setStep(2) }
+                            }}
+                            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-sm font-semibold rounded-xl transition-colors shrink-0"
+                          >
+                            {isStudentLookupPending ? '...' : 'Find'}
+                          </button>
+                        </div>
+                      </div>
                     )}
                     {step === 2 && (
                       <button onClick={() => setIsScanning(true)} disabled={loading} className="w-full flex justify-center items-center py-4 px-6 rounded-2xl text-white bg-indigo-600 hover:bg-indigo-700 text-lg font-bold shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98] disabled:opacity-50">

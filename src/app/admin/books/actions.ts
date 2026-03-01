@@ -32,11 +32,22 @@ export async function fetchBookByISBN(rawIsbn: string) {
         publisher = bookInfo.publisher || '';
         publication_year = bookInfo.publishedDate ? parseInt(bookInfo.publishedDate.substring(0, 4)) : null;
         description = bookInfo.description || '';
-        cover_image_url = bookInfo.imageLinks?.thumbnail?.replace('http:', 'https:') || null;
         genre = bookInfo.categories && bookInfo.categories.length > 0 ? bookInfo.categories.join(', ') : null;
         page_count = bookInfo.pageCount || null;
         language = bookInfo.language || null;
+
+        // Use the best available preview URL — the browser can load these directly.
+        // Storage upload (addBookToCatalog) uses Open Library by ISBN for high-res.
+        const imageLinks = bookInfo.imageLinks;
+        cover_image_url =
+          imageLinks?.extraLarge?.replace('http:', 'https:') ||
+          imageLinks?.large?.replace('http:', 'https:') ||
+          imageLinks?.medium?.replace('http:', 'https:') ||
+          imageLinks?.thumbnail?.replace('http:', 'https:').replace('zoom=1', 'zoom=5') ||
+          null;
+
         found = true;
+
       }
     }
 
@@ -58,6 +69,7 @@ export async function fetchBookByISBN(rawIsbn: string) {
       publisher = doc.publisher ? doc.publisher[0] : '';
       publication_year = doc.first_publish_year || null;
       description = ''; // OpenLibrary search API rarely returns full description
+      // Open Library: use -L.jpg (largest consistently available size)
       cover_image_url = doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg` : null;
       genre = doc.subject && doc.subject.length > 0 ? doc.subject.slice(0, 5).join(', ') : null; // Limit to 5 subjects to avoid massive strings
       page_count = doc.number_of_pages_median || null;
@@ -151,47 +163,85 @@ export async function addBookToCatalog(prevState: unknown, formData: FormData) {
     }
   }
 
-  // Handle Image Download, Compression, and Upload
-  if (cover_image_url && cover_image_url.startsWith('http')) {
+  // ── Cover Image: Download, Compress, Upload ──────────────────────────────
+  // Google Books image URLs block server-side fetching and return a tiny placeholder.
+  // Strategy: try Open Library by ISBN first (reliable), then fall back to the
+  // provided cover_image_url, then give up gracefully.
+  if (cover_image_url || isbn) {
     try {
-      // 1. Download the image
-      const imageResponse = await fetch(cover_image_url);
-      if (!imageResponse.ok) throw new Error('Failed to download image from source URL');
-      const arrayBuffer = await imageResponse.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
+      let imageBuffer: Buffer | null = null
 
-      // 2. Compress and resize using sharp
-      const optimizedImageBuffer = await sharp(buffer)
-        .resize({ width: 600, height: 900, fit: 'inside', withoutEnlargement: true }) // Typical book aspect ratio
-        .webp({ quality: 80 }) // Convert to highly compressed webp
-        .toBuffer();
+      // Helper: download and check the image isn't a placeholder (< 8 KB)
+      const tryDownload = async (url: string): Promise<Buffer | null> => {
+        try {
+          const res = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LMS/1.0)' }
+          })
+          if (!res.ok) return null
+          const ab = await res.arrayBuffer()
+          const buf = Buffer.from(ab)
+          // Anything < 8 KB is almost certainly a "no image" placeholder
+          if (buf.length < 8192) return null
+          return buf
+        } catch {
+          return null
+        }
+      }
 
-      // 3. Upload to Supabase Storage
-      const fileName = `cover_${isbn || Date.now()}_${Date.now()}.webp`;
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('book-covers')
-        .upload(fileName, optimizedImageBuffer, {
-          contentType: 'image/webp',
-          upsert: true
-        });
+      // 1st choice: Open Library cover by ISBN (no auth, server-side friendly)
+      if (isbn) {
+        imageBuffer = await tryDownload(
+          `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg`
+        )
+      }
 
-      if (uploadError) {
-        console.error('Failed to upload image to Supabase:', uploadError);
-        // We won't block the book insertion, just fall back to no image
-        cover_image_url = '';
-      } else {
-        // 4. Get the public URL
-        const { data: publicUrlData } = supabase.storage
+      // 2nd choice: the preview URL the form sent (works for some sources)
+      if (!imageBuffer && cover_image_url?.startsWith('http')) {
+        imageBuffer = await tryDownload(cover_image_url)
+      }
+
+      // 3rd choice: Open Library medium size (sometimes -L isn't indexed yet)
+      if (!imageBuffer && isbn) {
+        imageBuffer = await tryDownload(
+          `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`
+        )
+      }
+
+      if (imageBuffer) {
+        // Compress and resize — 800×1200 preserves readability while keeping files small
+        const optimizedImageBuffer = await sharp(imageBuffer)
+          .resize({ width: 800, height: 1200, fit: 'inside', withoutEnlargement: true })
+          .webp({ quality: 88 })
+          .toBuffer()
+
+        const fileName = `cover_${isbn || Date.now()}_${Date.now()}.webp`
+        const { data: uploadData, error: uploadError } = await supabase.storage
           .from('book-covers')
-          .getPublicUrl(uploadData.path);
-        
-        cover_image_url = publicUrlData.publicUrl;
+          .upload(fileName, optimizedImageBuffer, {
+            contentType: 'image/webp',
+            upsert: true
+          })
+
+        if (uploadError) {
+          console.error('Failed to upload image to Supabase:', uploadError)
+          cover_image_url = ''
+        } else {
+          const { data: publicUrlData } = supabase.storage
+            .from('book-covers')
+            .getPublicUrl(uploadData.path)
+          cover_image_url = publicUrlData.publicUrl
+        }
+      } else {
+        // No usable image found from any source — save without a cover
+        console.warn('No valid cover image found for ISBN:', isbn)
+        cover_image_url = ''
       }
     } catch (error) {
-      console.error('Error processing cover image:', error);
-      cover_image_url = ''; // Fallback to no image if compression fails
+      console.error('Error processing cover image:', error)
+      cover_image_url = ''
     }
   }
+
 
   // If we reach here, it's a new book or it has no ISBN
   const { error } = await supabase.from('books').insert({

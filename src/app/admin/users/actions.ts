@@ -2,6 +2,7 @@
 
 import { createClient } from '@/utils/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { extractStudentNumberFromEmail } from '@/lib/email-utils'
 
 export async function adminCreateUser(formData: FormData) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -41,7 +42,7 @@ export async function adminCreateUser(formData: FormData) {
   }
 
   // 2. Create user via Admin Auth API
-  const { error: createError } = await supabaseAdmin.auth.admin.createUser({
+  const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
     email: email,
     password: password,
     email_confirm: true, // Auto-confirm the email
@@ -59,12 +60,28 @@ export async function adminCreateUser(formData: FormData) {
     return { error: createError.message }
   }
 
-  // 3. The trigger "on_auth_user_created" we made earlier will automatically intercept this
-  // and insert the role/full_name into the public.`profiles` table seamlessly!
+  // 3. The trigger "on_auth_user_created" inserts the profile automatically.
+  // If this is a borrower with an STI email, auto-set the student number.
+  if (newUser?.user && role === 'borrower') {
+    const autoStudentNumber = extractStudentNumberFromEmail(email)
+    if (autoStudentNumber) {
+      // Small delay to allow the DB trigger to create the profile first
+      await new Promise(resolve => setTimeout(resolve, 800))
+      await supabaseAdmin
+        .from('profiles')
+        .update({ student_number: autoStudentNumber })
+        .eq('id', newUser.user.id)
+    }
+  }
 
   revalidatePath('/admin/users')
-  return { success: true, message: `Successfully created ${role} account for ${fullName}` }
+  const autoNum = role === 'borrower' ? extractStudentNumberFromEmail(email) : null
+  const msg = autoNum
+    ? `Account created for ${fullName}. Student number auto-set to ${autoNum}.`
+    : `Successfully created ${role} account for ${fullName}`
+  return { success: true, message: msg }
 }
+
 
 export async function adminUpdateUserRole(targetUserId: string, newRole: string) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -143,4 +160,31 @@ export async function adminDeleteUser(targetUserId: string) {
 
   revalidatePath('/admin/users')
   return { success: true, message: 'User permanently deleted.' }
+}
+
+export async function adminUpdateStudentNumber(targetUserId: string, studentNumber: string) {
+  const standardSupabase = await createClient()
+  const { data: { user } } = await standardSupabase.auth.getUser()
+  if (!user) return { error: 'Unauthorized' }
+
+  const { data: profile } = await standardSupabase.from('profiles').select('role').eq('id', user.id).single()
+  if (!profile || !['super_admin', 'librarian'].includes(profile.role)) {
+    return { error: 'Only administrators can set student numbers.' }
+  }
+
+  const clean = studentNumber.trim()
+  if (!clean) return { error: 'Student number cannot be empty.' }
+
+  const { error: updateError } = await standardSupabase
+    .from('profiles')
+    .update({ student_number: clean })
+    .eq('id', targetUserId)
+
+  if (updateError) {
+    if (updateError.code === '23505') return { error: 'That student number is already assigned to another account.' }
+    return { error: updateError.message }
+  }
+
+  revalidatePath('/admin/users')
+  return { success: true, message: `Student number set to ${clean}` }
 }

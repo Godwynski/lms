@@ -44,10 +44,11 @@ export default function EditBookModal({ book }: { book: Book }) {
     <>
       <button 
         onClick={() => setIsOpen(true)}
-        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
         title="Edit Book"
+        aria-label="Edit Book"
       >
-        <Edit className="w-4 h-4" />
+        <Edit className="w-4 h-4" aria-hidden="true" />
       </button>
 
       {isOpen && (
@@ -63,9 +64,10 @@ export default function EditBookModal({ book }: { book: Book }) {
               </h2>
               <button 
                 onClick={handleClose} 
-                className="p-1 rounded-full text-slate-400 hover:bg-slate-200 transition-colors"
+                className="p-1 rounded-full text-slate-400 hover:bg-slate-200 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+                aria-label="Close modal"
               >
-                <X className="w-5 h-5" />
+                <X className="w-5 h-5" aria-hidden="true" />
               </button>
             </div>
 
@@ -192,18 +194,18 @@ export default function EditBookModal({ book }: { book: Book }) {
                     <button
                       type="button"
                       onClick={handleClose}
-                      className="flex-1 py-2 text-slate-600 font-semibold hover:bg-slate-100 rounded-xl transition-colors"
+                      className="flex-1 py-2 text-slate-600 font-semibold hover:bg-slate-100 rounded-xl transition-colors outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
                       disabled={isPending}
-                      className="flex-[2] flex items-center justify-center gap-2 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-semibold rounded-xl shadow-sm transition-all"
+                      className="flex-[2] flex items-center justify-center gap-2 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-semibold rounded-xl shadow-sm transition outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
                     >
                       {isPending ? 'Updating...' : (
                         <>
-                          <Save className="w-4 h-4" />
+                          <Save className="w-4 h-4" aria-hidden="true" />
                           Update Book
                         </>
                       )}

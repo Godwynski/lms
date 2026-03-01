@@ -32,10 +32,10 @@ export default async function UsersPage() {
     console.error('Failed to load auth users:', authError)
   }
 
-  // 4. Also fetch profiles for extra info (role, full_name)
+  // 4. Also fetch profiles for extra info (role, full_name, student_number)
   const { data: profiles } = await supabase
     .from('profiles')
-    .select('id, full_name, role, email, created_at')
+    .select('id, full_name, role, email, created_at, student_number')
 
   const profileMap = new Map((profiles || []).map(p => [p.id, p]))
 
@@ -47,10 +47,12 @@ export default async function UsersPage() {
       email: authUser.email || '',
       full_name: p?.full_name || authUser.user_metadata?.full_name || null,
       role: p?.role || authUser.user_metadata?.role || 'borrower',
+      student_number: p?.student_number || null,
       created_at: authUser.created_at,
       last_sign_in_at: authUser.last_sign_in_at || null,
     }
   })
+
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 sm:p-12">

@@ -3,31 +3,73 @@
 import { createClient } from '@/utils/supabase/server'
 import { revalidatePath } from 'next/cache'
 
-// Temporary quick lookup by email for demo purposes, 
-// usually this is by a unique library_card_number encoded in the QR.
+// Parses a checkout scan into type + identifiers
+function parseCheckoutScan(raw: string) {
+  if (raw.startsWith('STICAL-LMS:USER:')) {
+    const parts = raw.split(':')
+    // Format: STICAL-LMS:USER:{userId}:{studentNumber?}
+    return { type: 'libraryCard' as const, userId: parts[2], studentNumber: parts[3] }
+  }
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (uuidRegex.test(raw)) {
+    return { type: 'uuid' as const, userId: raw }
+  }
+  return { type: 'studentNumber' as const, studentNumber: raw }
+}
+
 export async function lookupUser(scannedData: string) {
   const supabase = await createClient()
 
-  // Ensure current user is admin or staff
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Unauthorized' }
 
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!profile || !['admin', 'staff'].includes(profile.role)) {
+  if (!profile || !['super_admin', 'librarian', 'circulation_assistant'].includes(profile.role)) {
     return { error: 'Unauthorized to perform checkouts' }
   }
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  
-  if (!uuidRegex.test(scannedData)) {
-    return { error: 'Invalid Library Card. Scanning a valid card QR is required.' }
+  const parsed = parseCheckoutScan(scannedData.trim())
+
+  let borrowerProfile = null
+
+  if (parsed.type === 'libraryCard' || parsed.type === 'uuid') {
+    // Look up by user ID
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, full_name, role, student_number')
+      .eq('id', parsed.userId)
+      .single()
+    borrowerProfile = data
+  } else {
+    // Look up by student number
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, full_name, role, student_number')
+      .eq('student_number', parsed.studentNumber)
+      .single()
+    borrowerProfile = data
   }
 
-  const { data: borrowerProfile } = await supabase.from('profiles').select('id, full_name, role').eq('id', scannedData).single()
-  
-  if (!borrowerProfile) return { error: 'User not found in the system' }
+  if (!borrowerProfile) return { error: 'Borrower not found. Check the QR or student number and try again.' }
   return { user: borrowerProfile }
 }
+
+export async function lookupUserByStudentNumber(studentNumber: string) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Unauthorized' }
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, full_name, role, student_number')
+    .eq('student_number', studentNumber.trim())
+    .single()
+
+  if (error || !data) return { error: 'No borrower found with that student number.' }
+  return { user: data }
+}
+
 
 export async function lookupOrAddBook(isbn: string) {
   const supabase = await createClient()

@@ -200,3 +200,151 @@ supabase/
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public anon key (client-side) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role key (server-only, admin operations) |
 | `GOOGLE_BOOKS_API_KEY` | Optional — Google Books API key for ISBN lookups |
+
+---
+
+## 8. Digital Library Card — Design Specification
+
+> **Status:** Planned (Phase 1) | **Access:** Borrowers (Students)
+
+The Digital Library Card is the student's primary identification during physical checkouts. It replaces the need for a physical card by displaying a scannable QR code on the student's phone, and also supports manual lookup via student number as a fallback.
+
+---
+
+### 8.1 Identification Methods
+
+Two methods are supported to identify a borrower at the circulation desk:
+
+| Method | How it works | When to use |
+|---|---|---|
+| **QR Code Scan** | Staff scans the QR on the student's phone/printout using the checkout interface camera | Primary method — fast, no typing required |
+| **Student Number Lookup** | Staff types the student number into a search field | Fallback — when phone is dead, forgotten, or QR won't scan |
+
+---
+
+### 8.2 Data Model Changes
+
+The `profiles` table needs two new columns:
+
+```sql
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS student_number VARCHAR(20) UNIQUE,
+  ADD COLUMN IF NOT EXISTS library_card_qr TEXT; -- base64 or URL of the generated QR image
+```
+
+**`student_number`** — the official STI student ID (e.g., `2024-0001-MNL`). Set by admin when creating the account, or entered during self-registration. Must be unique.
+
+**`library_card_qr`** — the QR code content (the encoded string). The actual QR image is rendered on the frontend using a library like `qrcode.react`. No need to store an image — just store the payload string.
+
+**QR Payload format:**
+```
+STICAL-LMS:USER:{user_id}:{student_number}
+```
+Example: `STICAL-LMS:USER:f47ac10b-58cc-4372-a567-0e02b2c3d479:2024-0001-MNL`
+
+Using a prefixed format prevents accidental collisions with book QR scans and allows the checkout scanner to detect what type of QR was scanned.
+
+---
+
+### 8.3 Student View — Library Card Dashboard Widget
+
+On the borrower dashboard (`/`), a **Library Card card** is displayed:
+
+```
+┌─────────────────────────────────────┐
+│  STI College Alabang                │
+│  Library Card                       │
+│                                     │
+│  ████████████████████               │
+│  ██  QR CODE HERE  ██               │
+│  ████████████████████               │
+│                                     │
+│  Juan Dela Cruz                     │
+│  Student No: 2024-0001-MNL          │
+│                                     │
+│  [ Download / Print ]               │
+└─────────────────────────────────────┘
+```
+
+- QR is rendered client-side using `qrcode.react` (no server image needed)
+- "Download / Print" button generates a print-friendly version of the card
+- Card is only shown to users with role = `borrower`
+
+---
+
+### 8.4 Checkout Flow Using the Library Card
+
+**Using QR scan (primary):**
+1. Staff opens `/admin/checkout`
+2. Staff clicks **"Scan Borrower Card"**
+3. Camera activates — student shows QR on phone
+4. System parses the QR payload: `STICAL-LMS:USER:{user_id}:{student_number}`
+5. System fetches the borrower's profile and displays their name + active loans
+6. Staff proceeds to scan the **book QR** to complete checkout
+
+**Using Student Number (fallback):**
+1. Staff opens `/admin/checkout`
+2. Staff types or pastes the student number into a search field
+3. System looks up `profiles` by `student_number` and returns the match
+4. Same flow continues from step 5 above
+
+---
+
+### 8.5 Checkout Scanner — QR Type Detection
+
+The checkout scanner must distinguish between two QR types:
+
+```typescript
+function parseCheckoutScan(raw: string) {
+  if (raw.startsWith('STICAL-LMS:USER:')) {
+    // Borrower library card
+    const parts = raw.split(':')
+    return { type: 'borrower', userId: parts[2], studentNumber: parts[3] }
+  }
+  if (raw.startsWith('STICAL-LMS:BOOK:')) {
+    // Physical book copy QR
+    const parts = raw.split(':')
+    return { type: 'book', copyId: parts[2] }
+  }
+  // Legacy: treat as ISBN barcode
+  return { type: 'isbn', value: raw }
+}
+```
+
+The checkout UI uses this to automatically know whether a scan is identifying the borrower or the book, making the flow fully automatic without staff needing to switch modes.
+
+---
+
+### 8.6 Admin — Setting Student Numbers
+
+When creating or editing a user in `/admin/users`, the admin should be able to set the `student_number` field. This is especially important for:
+- Students who self-registered (they may not know to enter their number)
+- Bulk imports of new students each academic year
+
+---
+
+### 8.7 Edge Cases
+
+| Scenario | Handling |
+|---|---|
+| Student doesn't have a student number set | Library card shows QR only (using `user_id`). Manual lookup by name is offered as fallback. |
+| Two students with same student number | Prevented by `UNIQUE` constraint on `student_number` column |
+| QR is damaged or phone screen too dim | Staff falls back to student number or name search |
+| Student not registered in system | Staff creates a new account via User Management, assigns student number |
+| Student's account is suspended/inactive | Checkout action blocked with a visible error message |
+
+---
+
+### 8.8 Implementation Plan
+
+| Step | Task | Files Affected |
+|---|---|---|
+| 1 | Add `student_number` column to `profiles` table | `schema.sql` + migration |
+| 2 | Add student number field to User Create/Edit modals in `/admin/users` | `UsersClient.tsx`, `actions.ts` |
+| 3 | Add student number input to self-registration form | `register/page.tsx` |
+| 4 | Install `qrcode.react` (`npm i qrcode.react`) | — |
+| 5 | Build `LibraryCard.tsx` component | `src/components/LibraryCard.tsx` |
+| 6 | Add Library Card widget to borrower dashboard | `src/app/page.tsx` |
+| 7 | Update checkout scanner to parse QR type | `src/app/admin/checkout/` |
+| 8 | Add student number search field to checkout page | `src/app/admin/checkout/page.tsx` |
+
