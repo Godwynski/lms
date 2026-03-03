@@ -4,6 +4,7 @@ import { useState, useActionState, useEffect } from 'react'
 import Image from 'next/image'
 import { fetchBookByISBN, addBookToCatalog } from './actions'
 import QRScanner from '@/components/QRScanner'
+import { AsyncButton } from '@/components/ui/AsyncButton'
 import { Search, Plus, Save, X, BookOpen, AlertCircle, CheckCircle2, ScanLine } from 'lucide-react'
 
 interface BookData {
@@ -154,13 +155,15 @@ export default function AddBookModal() {
                                 className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 focus-visible:border-indigo-500 focus-visible:ring-4 focus-visible:ring-indigo-100 rounded-xl transition-all outline-none tabular-nums"
                               />
                             </div>
-                            <button 
+                            <AsyncButton 
                               onClick={() => handleFetchBook(isbnInput)}
                               disabled={isFetching || !isbnInput}
-                              className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-semibold rounded-xl transition-colors outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
+                              isLoading={isFetching}
+                              loadingText="Fetching..."
+                              className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white font-semibold rounded-xl"
                             >
-                              {isFetching ? 'Fetching...' : 'Search'}
-                            </button>
+                              Search
+                            </AsyncButton>
                           </div>
                           
                           <div className="flex items-center gap-4 py-2">
@@ -296,18 +299,16 @@ export default function AddBookModal() {
                         >
                           Cancel
                         </button>
-                        <button
+                        <AsyncButton
                           type="submit"
-                          disabled={isPending}
-                          className="flex-[2] flex items-center justify-center gap-2 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-semibold rounded-xl shadow-sm transition outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
+                          isLoading={isPending}
+                          loadingText="Saving to Catalog..."
+                          forcedState={state?.success ? 'success' : state?.error ? 'error' : null}
+                          className="flex-[2] py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-semibold rounded-xl shadow-sm"
                         >
-                          {isPending ? 'Saving to Catalog...' : (
-                            <>
-                              <Save className="w-4 h-4" aria-hidden="true" />
-                              Save to Catalog
-                            </>
-                          )}
-                        </button>
+                          <Save className="w-4 h-4" aria-hidden="true" />
+                          Save to Catalog
+                        </AsyncButton>
                       </div>
 
                     </form>

@@ -3,13 +3,20 @@
 import { useState } from 'react'
 import Image from 'next/image'
 import QRScanner from '@/components/QRScanner'
-import { lookupUser, lookupOrAddBook, processCheckout, processReturn, lookupUserByStudentNumber } from './actions'
-import { UserCheck, Book, AlertCircle, CheckCircle2, CornerDownLeft, ArrowUpFromLine, Hash } from 'lucide-react'
+import { lookupUser, lookupOrAddBook, processCheckout, processReturn, lookupUserByStudentNumber, getBorrowerStatus } from './actions'
+import { UserCheck, Book, AlertCircle, CheckCircle2, CornerDownLeft, ArrowUpFromLine, Hash, ShieldAlert, BadgeDollarSign } from 'lucide-react'
 
 interface Borrower {
   id: string
   full_name: string | null
   role: string
+}
+
+interface BorrowerStatus {
+  holds: { id: string; reason: string }[]
+  fines: { id: string; amount: number }[]
+  totalFines: number
+  isBlocked: boolean
 }
 
 interface BookInfo {
@@ -28,6 +35,7 @@ export default function CheckoutClient() {
   const [loading, setLoading] = useState(false)
 
   const [borrower, setBorrower] = useState<Borrower | null>(null)
+  const [borrowerStatus, setBorrowerStatus] = useState<BorrowerStatus | null>(null)
   const [book, setBook] = useState<BookInfo | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [studentNumberInput, setStudentNumberInput] = useState('')
@@ -50,9 +58,8 @@ export default function CheckoutClient() {
           const result = await lookupUser(decodedText)
           if (result.error) {
             setError(result.error)
-          } else {
-            setBorrower(result.user ?? null)
-            setStep(2)
+          } else if (result.user) {
+            await handleBorrowerFound(result.user)
           }
         } else if (step === 2) {
           // Look up book by ISBN
@@ -126,11 +133,22 @@ export default function CheckoutClient() {
   const resetFlow = () => {
     setStep(1)
     setBorrower(null)
+    setBorrowerStatus(null)
     setBook(null)
     setSuccessMsg(null)
     setError(null)
     setIsScanning(false)
     setStudentNumberInput('')
+  }
+
+  // Called after a borrower is successfully identified so we can show compliance info
+  const handleBorrowerFound = async (foundBorrower: Borrower) => {
+    setBorrower(foundBorrower)
+    setStep(2)
+    const status = await getBorrowerStatus(foundBorrower.id)
+    if (!('error' in status)) {
+      setBorrowerStatus(status as BorrowerStatus)
+    }
   }
 
   return (
@@ -292,7 +310,7 @@ export default function CheckoutClient() {
                                   const res = await lookupUserByStudentNumber(studentNumberInput)
                                   setIsStudentLookupPending(false)
                                   if (res.error) setError(res.error)
-                                  else { setBorrower(res.user ?? null); setStep(2) }
+                                  else if (res.user) await handleBorrowerFound(res.user)
                                 }
                               }}
                               placeholder="Student number (e.g. 2024-0001-MNL)"
@@ -307,7 +325,7 @@ export default function CheckoutClient() {
                               const res = await lookupUserByStudentNumber(studentNumberInput)
                               setIsStudentLookupPending(false)
                               if (res.error) setError(res.error)
-                              else { setBorrower(res.user ?? null); setStep(2) }
+                              else if (res.user) await handleBorrowerFound(res.user)
                             }}
                             className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-sm font-semibold rounded-xl transition-colors shrink-0"
                           >
@@ -317,9 +335,39 @@ export default function CheckoutClient() {
                       </div>
                     )}
                     {step === 2 && (
-                      <button onClick={() => setIsScanning(true)} disabled={loading} className="w-full flex justify-center items-center py-4 px-6 rounded-2xl text-white bg-indigo-600 hover:bg-indigo-700 text-lg font-bold shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98] disabled:opacity-50">
-                        Scan Book ISBN
-                      </button>
+                      <div className="space-y-4 w-full">
+                        {/* Compliance blocker banner */}
+                        {borrowerStatus?.isBlocked && (
+                          <div className="bg-red-50 border border-red-200 rounded-2xl p-4 space-y-2">
+                            <div className="flex items-center gap-2 text-red-700 font-bold">
+                              <ShieldAlert className="w-5 h-5 flex-shrink-0" />
+                              Account Restricted — Cannot Proceed
+                            </div>
+                            {borrowerStatus.holds.length > 0 && (
+                              <div className="text-sm text-red-600 space-y-1">
+                                <p className="font-semibold">Active Holds:</p>
+                                {borrowerStatus.holds.map(h => (
+                                  <p key={h.id} className="pl-3 border-l-2 border-red-300">{h.reason}</p>
+                                ))}
+                              </div>
+                            )}
+                            {borrowerStatus.totalFines > 0 && (
+                              <div className="flex items-center gap-2 text-sm text-red-600 font-semibold">
+                                <BadgeDollarSign className="w-4 h-4" />
+                                Unpaid Fines: ₱{borrowerStatus.totalFines.toFixed(2)}
+                              </div>
+                            )}
+                            <p className="text-xs text-red-500 mt-1">Resolve all holds and fines before processing a new checkout.</p>
+                          </div>
+                        )}
+                        <button
+                          onClick={() => setIsScanning(true)}
+                          disabled={loading || !!borrowerStatus?.isBlocked}
+                          className="w-full flex justify-center items-center py-4 px-6 rounded-2xl text-white bg-indigo-600 hover:bg-indigo-700 text-lg font-bold shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Scan Book ISBN
+                        </button>
+                      </div>
                     )}
                     {step === 3 && (
                       <div className="w-full flex space-x-3">

@@ -16,7 +16,8 @@ export default async function CheckoutPage() {
 
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
   
-  if (!profile || !['admin', 'staff'].includes(profile.role)) {
+  const ALLOWED_ROLES = ['super_admin', 'librarian', 'circulation_assistant']
+  if (!profile || !ALLOWED_ROLES.includes(profile.role)) {
     redirect('/')
   }
 

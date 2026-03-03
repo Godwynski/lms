@@ -174,3 +174,51 @@ export async function processReturn(isbn: string) {
   revalidatePath('/admin/checkout')
   return { success: true, message: data.message || 'Return successful!' }
 }
+
+/**
+ * Pre-flight compliance check: fetches active holds and unpaid fines
+ * for a borrower so the librarian UI can show a warning before committing
+ * the checkout.
+ */
+export async function getBorrowerStatus(borrowerId: string) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Unauthorized' }
+
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+  if (!profile || !['super_admin', 'librarian', 'circulation_assistant'].includes(profile.role)) {
+    return { error: 'Unauthorized' }
+  }
+
+  // Fetch active holds
+  const { data: holds } = await supabase
+    .from('holds')
+    .select('id, reason, created_at')
+    .eq('borrower_id', borrowerId)
+    .eq('active', true)
+
+  // Fetch unpaid fines with due date from the borrowing record
+  const { data: fines } = await supabase
+    .from('fines')
+    .select('id, amount, created_at, borrowing_record_id')
+    .eq('status', 'unpaid')
+    .in(
+      'borrowing_record_id',
+      (
+        await supabase
+          .from('borrowing_records')
+          .select('id')
+          .eq('borrower_id', borrowerId)
+      ).data?.map((r) => r.id) ?? []
+    )
+
+  const totalFines = (fines ?? []).reduce((sum, f) => sum + Number(f.amount), 0)
+
+  return {
+    holds: holds ?? [],
+    fines: fines ?? [],
+    totalFines,
+    isBlocked: (holds && holds.length > 0) || totalFines > 0,
+  }
+}

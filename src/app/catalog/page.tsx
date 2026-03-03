@@ -1,23 +1,76 @@
 import { createClient } from '@/utils/supabase/server'
 import Link from 'next/link'
-import { ArrowLeft, Library, ListChecks } from 'lucide-react'
+import { ArrowLeft, Library, ListChecks, Loader2 } from 'lucide-react'
+import { Suspense } from 'react'
 import CatalogSearch from './CatalogSearch'
 
-interface RawBook {
-  book_reviews?: { rating: number }[]
-  [key: string]: unknown
+export const revalidate = 3600 // Cache this page for 1 hour
+interface PageProps {
+  searchParams: Promise<{
+    q?: string
+    field?: string
+    availability?: string
+    yearFrom?: string
+    yearTo?: string
+    sort?: string
+    page?: string
+  }>
 }
 
-export default async function CatalogPage() {
+export default async function CatalogPage(props: PageProps) {
+  const searchParams = await props.searchParams
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  // Fetch all books with their ratings
-  const { data: rawBooks, error } = await supabase
-    .from('books')
-    .select('*, book_reviews(rating)')
-    .order('title', { ascending: true })
+  const q = searchParams.q || ''
+  const field = searchParams.field || 'all'
+  const availability = searchParams.availability || 'All'
+  const yearFrom = searchParams.yearFrom || ''
+  const yearTo = searchParams.yearTo || ''
+  const sort = searchParams.sort || 'title_asc'
+  const page = parseInt(searchParams.page || '1')
+  const pageSize = 20
+
+  // Build the Supabase query dynamically
+  let bookQuery = supabase.from('books').select('*', { count: 'exact' })
+
+  // 1. Text Search
+  if (q) {
+    if (field === 'title') bookQuery = bookQuery.ilike('title', `%${q}%`)
+    else if (field === 'author') bookQuery = bookQuery.ilike('author', `%${q}%`)
+    else if (field === 'isbn') bookQuery = bookQuery.ilike('isbn', `%${q}%`)
+    else if (field === 'ddc') bookQuery = bookQuery.ilike('ddc_call_number', `%${q}%`)
+    else {
+      // 'all' case using GIN indexes if possible, but fallback to or() for now
+      bookQuery = bookQuery.or(`title.ilike.%${q}%,author.ilike.%${q}%,isbn.ilike.%${q}%,ddc_call_number.ilike.%${q}%,publisher.ilike.%${q}%`)
+    }
+  }
+
+  // 2. Availability Filters
+  if (availability === 'Available') {
+    bookQuery = bookQuery.gt('available_copies', 0)
+  } else if (availability === 'Checked Out') {
+    bookQuery = bookQuery.eq('available_copies', 0)
+  }
+
+  // 3. Year Filters
+  if (yearFrom) bookQuery = bookQuery.gte('publication_year', parseInt(yearFrom))
+  if (yearTo) bookQuery = bookQuery.lte('publication_year', parseInt(yearTo))
+
+  // 4. Sorting
+  if (sort === 'title_asc') bookQuery = bookQuery.order('title', { ascending: true })
+  else if (sort === 'title_desc') bookQuery = bookQuery.order('title', { ascending: false })
+  else if (sort === 'year_desc') bookQuery = bookQuery.order('publication_year', { ascending: false })
+  else if (sort === 'year_asc') bookQuery = bookQuery.order('publication_year', { ascending: true })
+
+  // 5. Pagination
+  const from = (page - 1) * pageSize
+  const to = from + pageSize - 1
+  bookQuery = bookQuery.range(from, to)
+
+  // Execute query
+  const { data: books, error, count } = await bookQuery
 
   // Fetch reading lists + saved book IDs for the logged-in user
   let readingLists: { id: string; name: string }[] = []
@@ -42,25 +95,6 @@ export default async function CatalogPage() {
       savedBookIds = (listBooks || []).map(lb => lb.book_id)
     }
   }
-
-  // Pre-calculate average ratings
-  const books = (rawBooks || []).map((b: RawBook) => {
-    let avg = 0
-    let count = 0
-    if (b.book_reviews && b.book_reviews.length > 0) {
-      count = b.book_reviews.length
-      const sum = b.book_reviews.reduce((acc: number, r: { rating: number }) => acc + r.rating, 0)
-      avg = sum / count
-    }
-    const bookRet = { ...b } as Record<string, unknown>
-    delete bookRet.book_reviews
-    bookRet.average_rating = avg
-    bookRet.review_count = count
-    
-    // We cast it to match the BookType expected by CatalogSearch
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return bookRet as any
-  })
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-500/30">
@@ -102,13 +136,23 @@ export default async function CatalogPage() {
             Failed to load catalog data. Please try again later.
           </div>
         ) : (
-          <CatalogSearch
-            initialBooks={books || []}
-            readingLists={readingLists}
-            savedBookIds={savedBookIds}
-            isLoggedIn={!!user}
-            currentUserId={user?.id}
-          />
+          <Suspense fallback={
+            <div className="flex flex-col items-center justify-center p-20 animate-in fade-in duration-500">
+              <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-4" />
+              <p className="text-slate-500 font-medium">Loading catalog data...</p>
+            </div>
+          }>
+            <CatalogSearch
+              initialBooks={books || []}
+              totalCount={count || 0}
+              currentPage={page}
+              pageSize={pageSize}
+              readingLists={readingLists}
+              savedBookIds={savedBookIds}
+              isLoggedIn={!!user}
+              currentUserId={user?.id}
+            />
+          </Suspense>
         )}
       </div>
     </div>

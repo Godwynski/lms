@@ -3,7 +3,8 @@ import Link from 'next/link'
 import {
   BookOpen, Users, ScanLine, Search, BookMarked, Bookmark,
   AlertTriangle, TrendingUp, Clock, ArrowRight,
-  Package, BarChart2, ShieldCheck, CalendarDays, RotateCcw
+  Package, BarChart2, ShieldCheck, CalendarDays, RotateCcw,
+  ShieldAlert, BadgeDollarSign, History
 } from 'lucide-react'
 import Image from 'next/image'
 import LibraryCard from '@/components/LibraryCardWrapper'
@@ -65,6 +66,8 @@ export default async function Home() {
   let recentActivity: { id: string; title: string; borrower: string; status: string; date: string }[] = []
   let myBorrowings: { id: string; book_id: string; title: string; cover: string | null; due_date: string; status: string }[] = []
   let dueSoonCount = 0
+  let myHolds: { id: string; reason: string }[] = []
+  let myUnpaidFinesTotal = 0
 
   if (user && isStaff) {
     const [booksRes, borrowingsRes, profilesRes] = await Promise.all([
@@ -122,6 +125,25 @@ export default async function Home() {
     const threeDaysFromNow = new Date()
     threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3)
     dueSoonCount = myBorrowings.filter(b => new Date(b.due_date) <= threeDaysFromNow).length
+
+    // Fetch active holds
+    const { data: holdsData } = await supabase
+      .from('holds')
+      .select('id, reason')
+      .eq('borrower_id', user.id)
+      .eq('active', true)
+    myHolds = holdsData ?? []
+
+    // Fetch unpaid fines total
+    const borrowingIds = (borrows ?? []).map(b => b.id)
+    if (borrowingIds.length > 0) {
+      const { data: finesData } = await supabase
+        .from('fines')
+        .select('amount')
+        .in('borrowing_record_id', borrowingIds)
+        .eq('status', 'unpaid')
+      myUnpaidFinesTotal = (finesData ?? []).reduce((sum, f) => sum + Number(f.amount), 0)
+    }
   }
 
   const greeting = () => {
@@ -205,12 +227,34 @@ export default async function Home() {
               </div>
             )}
 
-            {/* ── BORROWER: Due soon alert ── */}
+                {/* ── BORROWER: Due soon alert ── */}
             {role === 'borrower' && dueSoonCount > 0 && (
               <div className="flex items-center gap-3 px-5 py-3.5 bg-amber-50 border border-amber-200 rounded-2xl">
                 <Clock className="w-5 h-5 text-amber-500 shrink-0" aria-hidden="true" />
                 <p className="text-sm font-semibold text-amber-700">
                   {dueSoonCount} book{dueSoonCount > 1 ? 's are' : ' is'} due within 3 days. Please return them soon!
+                </p>
+              </div>
+            )}
+
+            {/* ── BORROWER: Active Hold alert ── */}
+            {role === 'borrower' && myHolds.length > 0 && (
+              <div className="flex items-start gap-3 px-5 py-4 bg-red-50 border border-red-200 rounded-2xl">
+                <ShieldAlert className="w-5 h-5 text-red-500 shrink-0 mt-0.5" aria-hidden="true" />
+                <div>
+                  <p className="text-sm font-bold text-red-700">Your account has an active Hold</p>
+                  <p className="text-xs text-red-600 mt-0.5">{myHolds[0].reason}</p>
+                  <p className="text-xs text-red-500 mt-1">You cannot borrow books until this hold is resolved by a librarian.</p>
+                </div>
+              </div>
+            )}
+
+            {/* ── BORROWER: Unpaid fines alert ── */}
+            {role === 'borrower' && myUnpaidFinesTotal > 0 && (
+              <div className="flex items-center gap-3 px-5 py-3.5 bg-rose-50 border border-rose-200 rounded-2xl">
+                <BadgeDollarSign className="w-5 h-5 text-rose-500 shrink-0" aria-hidden="true" />
+                <p className="text-sm font-semibold text-rose-700">
+                  Outstanding fine: <strong>₱{myUnpaidFinesTotal.toFixed(2)}</strong>. Please visit the library counter to settle your balance.
                 </p>
               </div>
             )}
@@ -250,12 +294,12 @@ export default async function Home() {
                       <p className="font-bold text-slate-800">Browse Books</p>
                       <p className="text-xs text-slate-500">Discover new reads</p>
                     </Link>
-                    <Link href="/self-checkout" className="group bg-white border border-slate-100 hover:border-violet-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col gap-2">
+                    <Link href="/borrowings" className="group bg-white border border-slate-100 hover:border-violet-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col gap-2">
                       <div className="w-10 h-10 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center group-hover:bg-violet-600 group-hover:text-white transition-colors">
-                        <ScanLine className="w-5 h-5" aria-hidden="true" />
+                        <History className="w-5 h-5" aria-hidden="true" />
                       </div>
-                      <p className="font-bold text-slate-800">Self-Checkout</p>
-                      <p className="text-xs text-slate-500">Borrow books instantly</p>
+                      <p className="font-bold text-slate-800">My Borrowings</p>
+                      <p className="text-xs text-slate-500">View history &amp; due dates</p>
                     </Link>
                   </>
                 )}
