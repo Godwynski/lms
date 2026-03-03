@@ -37,14 +37,18 @@ export default function QRScanner({ onScanSuccess, onCancel }: QRScannerProps) {
     try {
       // 1. Check if the browser supports media devices
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Your browser does not support camera access or it is blocked by security settings. (HTTPS is required on mobile)')
+        setScannerState('error')
+        setErrorMsg('Your browser does not support camera access or it is blocked by security settings. (HTTPS is required on mobile)')
+        return;
       }
 
       // 2. Request permissions explicitly (Html5Qrcode.getCameras() does this internally, but we can catch the error)
       const cameras = await Html5Qrcode.getCameras()
       
       if (!cameras || cameras.length === 0) {
-        throw new Error('No cameras found on this device.')
+        setScannerState('error')
+        setErrorMsg('No cameras found on this device.')
+        return;
       }
 
       // 3. Initialize the scanner instance if needed
