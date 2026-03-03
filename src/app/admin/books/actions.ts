@@ -98,6 +98,59 @@ export async function fetchBookByISBN(rawIsbn: string) {
   }
 }
 
+export async function searchBookFallback(title: string, author?: string) {
+  try {
+    let query = `intitle:${encodeURIComponent(title)}`
+    if (author) {
+      query += `+inauthor:${encodeURIComponent(author)}`
+    }
+    
+    const apiKey = process.env.GOOGLE_BOOKS_API_KEY;
+    const gbUrl = apiKey 
+      ? `https://www.googleapis.com/books/v1/volumes?q=${query}&key=${apiKey}&maxResults=1`
+      : `https://www.googleapis.com/books/v1/volumes?q=${query}&maxResults=1`;
+
+    const gbResponse = await fetch(gbUrl);
+    if (!gbResponse.ok) return { error: 'Failed to search Google Books.' }
+    
+    const gbData = await gbResponse.json();
+    if (!gbData.items || gbData.items.length === 0) {
+      return { error: 'No books found matching this title and author.' }
+    }
+
+    const doc = gbData.items[0]
+    const bookInfo = doc.volumeInfo;
+    
+    const imageLinks = bookInfo.imageLinks;
+    const cover_image_url =
+      imageLinks?.extraLarge?.replace('http:', 'https:') ||
+      imageLinks?.large?.replace('http:', 'https:') ||
+      imageLinks?.medium?.replace('http:', 'https:') ||
+      imageLinks?.thumbnail?.replace('http:', 'https:').replace('zoom=1', 'zoom=5') ||
+      null;
+
+    return {
+      success: true,
+      book: {
+        title: bookInfo.title || title,
+        author: bookInfo.authors && bookInfo.authors.length > 0 ? bookInfo.authors.join(', ') : author || '',
+        isbn: bookInfo.industryIdentifiers?.find((i: { type: string; identifier: string }) => i.type === 'ISBN_13')?.identifier || bookInfo.industryIdentifiers?.find((i: { type: string; identifier: string }) => i.type === 'ISBN_10')?.identifier || '',
+        publisher: bookInfo.publisher || '',
+        publication_year: bookInfo.publishedDate ? parseInt(bookInfo.publishedDate.substring(0, 4)) : null,
+        description: bookInfo.description || '',
+        cover_image_url,
+        genre: bookInfo.categories && bookInfo.categories.length > 0 ? bookInfo.categories.join(', ') : null,
+        page_count: bookInfo.pageCount || null,
+        language: bookInfo.language || null,
+      }
+    }
+  } catch (error) {
+    console.error('Title Search Error:', error)
+    return { error: 'An unexpected error occurred while searching.' }
+  }
+}
+
+
 export async function addBookToCatalog(prevState: unknown, formData: FormData) {
   const supabase = await createClient()
 
@@ -121,10 +174,7 @@ export async function addBookToCatalog(prevState: unknown, formData: FormData) {
     return { error: 'Title is required.' }
   }
 
-  const isbn = rawIsbn ? normalizeIsbn(rawIsbn) : null
-  if (rawIsbn && !isbn) {
-    return { error: 'The scanned/entered ISBN is invalid.' }
-  }
+  const isbn = rawIsbn ? (normalizeIsbn(rawIsbn) || rawIsbn.trim()) : null
 
   const total_copies = parseInt(total_copies_str) || 1
   const publication_year = publication_year_str ? parseInt(publication_year_str) : null

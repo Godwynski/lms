@@ -74,7 +74,7 @@ export default async function CatalogPage(props: PageProps) {
 
   // Fetch reading lists + saved book IDs for the logged-in user
   let readingLists: { id: string; name: string }[] = []
-  let savedBookIds: string[] = []
+  let savedBookItems: { book_id: string; list_id: string }[] = []
 
   if (user) {
     const { data: lists } = await supabase
@@ -89,10 +89,10 @@ export default async function CatalogPage(props: PageProps) {
       const listIds = readingLists.map(l => l.id)
       const { data: listBooks } = await supabase
         .from('reading_list_books')
-        .select('book_id')
+        .select('book_id, list_id')
         .in('list_id', listIds)
 
-      savedBookIds = (listBooks || []).map(lb => lb.book_id)
+      savedBookItems = listBooks || []
     }
   }
 
@@ -148,7 +148,7 @@ export default async function CatalogPage(props: PageProps) {
               currentPage={page}
               pageSize={pageSize}
               readingLists={readingLists}
-              savedBookIds={savedBookIds}
+              savedBookItems={savedBookItems}
               isLoggedIn={!!user}
               currentUserId={user?.id}
             />

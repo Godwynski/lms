@@ -5,7 +5,7 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 import {
   Search, Book, X, Calendar, Globe, Hash, Layers, Building, AlignLeft,
-  SlidersHorizontal, BookMarked, Check, BookOpen, ChevronDown, Plus, Loader2, ListChecks, Star, MapPin
+  SlidersHorizontal, BookMarked, Check, BookOpen, Plus, Loader2, ListChecks, Star, MapPin
 } from 'lucide-react'
 import { addToReadingList, removeFromReadingList } from './readingListActions'
 import BookReviews from './BookReviews'
@@ -33,13 +33,15 @@ type BookType = {
   category?: string
 }
 
+type SavedBookItem = { book_id: string; list_id: string }
+
 type Props = {
   initialBooks: BookType[]
   totalCount: number
   currentPage: number
   pageSize: number
   readingLists: ReadingList[]
-  savedBookIds: string[]
+  savedBookItems: SavedBookItem[]
   isLoggedIn: boolean
   currentUserId?: string
 }
@@ -53,7 +55,7 @@ const SORT_OPTIONS = [
 ]
 
 export default function CatalogSearch({ 
-  initialBooks, totalCount, currentPage, pageSize, readingLists, savedBookIds, isLoggedIn, currentUserId 
+  initialBooks, totalCount, currentPage, pageSize, readingLists, savedBookItems, isLoggedIn, currentUserId 
 }: Props) {
   const router = useRouter()
   const pathname = usePathname()
@@ -71,8 +73,7 @@ export default function CatalogSearch({
   const [showFilters, setShowFilters] = useState(false)
   const [selectedBook, setSelectedBook] = useState<BookType | null>(null)
   const dialogRef = useRef<HTMLDialogElement>(null)
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set(savedBookIds))
-  const [listMenuOpen, setListMenuOpen] = useState(false)
+  const [savedPairs, setSavedPairs] = useState<Set<string>>(new Set(savedBookItems.map(item => `${item.list_id}:${item.book_id}`)))
   
   const hasActiveFilters = availability !== 'All' || yearFrom || yearTo || sortBy !== 'title_asc'
 
@@ -116,11 +117,13 @@ export default function CatalogSearch({
 
   const handleAddToList = (listId: string, bookId: string) => {
     startTransition(async () => {
-      const alreadySaved = savedIds.has(bookId)
-      if (alreadySaved) {
+      const pairId = `${listId}:${bookId}`
+      const isSavedInList = savedPairs.has(pairId)
+      
+      if (isSavedInList) {
         const res = await removeFromReadingList(bookId, listId)
         if (res.success) {
-          setSavedIds(prev => { const s = new Set(prev); s.delete(bookId); return s })
+          setSavedPairs(prev => { const s = new Set(prev); s.delete(pairId); return s })
           toast.success('Removed from list')
         } else {
           toast.error(res.error || 'Finished processing with errors')
@@ -128,13 +131,12 @@ export default function CatalogSearch({
       } else {
         const res = await addToReadingList(bookId, listId)
         if (res.success) {
-          setSavedIds(prev => new Set(prev).add(bookId))
+          setSavedPairs(prev => new Set(prev).add(pairId))
           toast.success('Saved to list!')
         } else {
           toast.error(res.error || 'Finished processing with errors')
         }
       }
-      setListMenuOpen(false)
     })
   }
 
@@ -254,7 +256,7 @@ export default function CatalogSearch({
         {isLoggedIn && (
           <span className="flex items-center gap-1.5 text-xs text-indigo-600 font-semibold">
             <ListChecks className="w-4 h-4" />
-            {savedIds.size} saved to reading list
+            {new Set([...savedPairs].map(pair => pair.split(':')[1])).size} saved to reading list
           </span>
         )}
       </div>
@@ -263,7 +265,7 @@ export default function CatalogSearch({
       {initialBooks.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
           {initialBooks.map((book) => {
-            const isSaved = savedIds.has(book.id)
+            const isSaved = [...savedPairs].some(p => p.endsWith(':' + book.id))
             return (
               <div
                 key={book.id}
@@ -305,7 +307,6 @@ export default function CatalogSearch({
                           handleAddToList(readingLists[0].id, book.id)
                         } else {
                           setSelectedBook(book)
-                          setListMenuOpen(true)
                         }
                       }}
                       className={`absolute bottom-2 right-2 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full transition-all shadow border ${
@@ -388,13 +389,13 @@ export default function CatalogSearch({
       {/* ── Book Detail Dialog ── */}
       <dialog
         ref={dialogRef}
-        onClose={() => { setSelectedBook(null); setListMenuOpen(false) }}
+        onClose={() => setSelectedBook(null)}
         className="backdrop:bg-slate-900/50 backdrop:backdrop-blur-sm bg-transparent p-0 m-auto w-full sm:max-w-4xl fixed inset-0 z-[200] max-h-[100dvh] open:flex items-end sm:items-center justify-center outline-none"
       >
         {selectedBook && (
           <div className="relative bg-white w-full sm:rounded-3xl shadow-2xl max-h-[calc(100dvh-4rem)] sm:max-h-[90vh] overflow-hidden flex flex-col md:flex-row rounded-t-3xl animate-in slide-in-from-bottom-4 sm:zoom-in-95 duration-200">
             <button
-              onClick={() => { setSelectedBook(null); setListMenuOpen(false) }}
+              onClick={() => setSelectedBook(null)}
               className="absolute top-4 right-4 z-10 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center bg-white/80 backdrop-blur-md rounded-full text-slate-500 hover:bg-white border border-slate-200 shadow-sm"
               aria-label="Close dialog"
             >
@@ -522,42 +523,49 @@ export default function CatalogSearch({
                   </div>
                 )}
 
-                {/* Reading list button */}
+                {/* Reading list buttons */}
                 {isLoggedIn && (
-                  <div className="relative">
-                    <button
-                      onClick={() => setListMenuOpen(!listMenuOpen)}
-                      disabled={isPending}
-                      className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all border ${
-                        savedIds.has(selectedBook.id)
-                          ? 'bg-indigo-600 text-white border-indigo-600'
-                          : 'bg-white text-slate-700 border-slate-200 hover:border-indigo-300'
-                      }`}
-                    >
-                      {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <BookMarked className="w-4 h-4" />}
-                      {savedIds.has(selectedBook.id) ? 'Saved to Reading List' : 'Save to Reading List'}
-                      <ChevronDown className="w-4 h-4 ml-auto" />
-                    </button>
-                    {listMenuOpen && readingLists.length > 0 && (
-                      <div className="absolute bottom-full mb-2 left-0 right-0 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden z-10 animate-in slide-in-from-bottom-2 duration-150">
-                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider px-4 pt-3 pb-1.5">Choose a list</p>
-                        {readingLists.map(list => (
-                          <button
-                            key={list.id}
-                            onClick={() => handleAddToList(list.id, selectedBook.id)}
-                            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-indigo-50 text-left transition-colors"
-                          >
-                            <div className="w-6 h-6 rounded-lg bg-indigo-100 flex items-center justify-center">
-                              {savedIds.has(selectedBook.id)
-                                ? <Check className="w-3.5 h-3.5 text-indigo-600" />
-                                : <Plus className="w-3.5 h-3.5 text-indigo-500" />
-                              }
-                            </div>
-                            <span className="font-semibold text-slate-800 text-sm">{list.name}</span>
-                          </button>
-                        ))}
+                  <div className="w-full">
+                    {readingLists.length === 1 ? (
+                      <button
+                        onClick={() => handleAddToList(readingLists[0].id, selectedBook.id)}
+                        disabled={isPending}
+                        className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all border ${
+                          savedPairs.has(`${readingLists[0].id}:${selectedBook.id}`)
+                            ? 'bg-indigo-600 text-white border-indigo-600'
+                            : 'bg-white text-slate-700 border-slate-200 hover:border-indigo-300'
+                        }`}
+                      >
+                        {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <BookMarked className="w-4 h-4" />}
+                        {savedPairs.has(`${readingLists[0].id}:${selectedBook.id}`) ? 'Remove from List' : 'Save to Reading List'}
+                      </button>
+                    ) : readingLists.length > 1 ? (
+                      <div className="flex flex-col gap-2 mt-2 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">
+                          <BookMarked className="w-3.5 h-3.5" /> Save to Lists
+                        </span>
+                        <div className="flex flex-wrap gap-2">
+                          {readingLists.map(list => {
+                            const isSaved = savedPairs.has(`${list.id}:${selectedBook.id}`)
+                            return (
+                              <button
+                                key={list.id}
+                                disabled={isPending}
+                                onClick={() => handleAddToList(list.id, selectedBook.id)}
+                                className={`px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all border flex items-center gap-1.5 shadow-sm min-h-[44px] ${
+                                  isSaved 
+                                    ? 'bg-indigo-600 text-white border-indigo-600' 
+                                    : 'bg-white text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50'
+                                }`}
+                              >
+                                {isSaved ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4 text-slate-400" />}
+                                {list.name}
+                              </button>
+                            )
+                          })}
+                        </div>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 )}
               </div>
