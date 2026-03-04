@@ -4,7 +4,7 @@ import {
   BookOpen, Users, ScanLine, Search, BookMarked, Bookmark,
   AlertTriangle, TrendingUp, Clock, ArrowRight,
   Package, BarChart2, ShieldCheck, CalendarDays, RotateCcw,
-  ShieldAlert, BadgeDollarSign, History
+  ShieldAlert, BadgeDollarSign, History, ChevronDown
 } from 'lucide-react'
 import Image from 'next/image'
 import LibraryCard from '@/components/LibraryCardWrapper'
@@ -199,6 +199,10 @@ export default async function Home() {
               <Link href="/register" className="flex-1 flex items-center justify-center py-3.5 px-6 rounded-xl bg-white border-2 border-slate-200 hover:border-indigo-200 text-slate-700 font-bold transition-all active:scale-95">
                 Get Library Card
               </Link>
+            </div>
+            
+            <div className="sm:hidden w-full flex justify-center mt-12 animate-bounce opacity-70">
+              <ChevronDown className="w-8 h-8 text-indigo-500" />
             </div>
           </div>
         ) : (

@@ -1,6 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import Link from 'next/link'
-import { ArrowLeft, Library, ListChecks, Loader2 } from 'lucide-react'
+import { ArrowLeft, Library, ListChecks } from 'lucide-react'
 import { Suspense } from 'react'
 import CatalogSearch from './CatalogSearch'
 
@@ -137,9 +137,24 @@ export default async function CatalogPage(props: PageProps) {
           </div>
         ) : (
           <Suspense fallback={
-            <div className="flex flex-col items-center justify-center p-20 animate-in fade-in duration-500">
-              <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-4" />
-              <p className="text-slate-500 font-medium">Loading catalog data...</p>
+            <div className="animate-in fade-in duration-500">
+              <div className="flex flex-col md:flex-row gap-4 mb-6">
+                <div className="h-12 bg-slate-200 rounded-xl animate-pulse w-full md:w-[40%]" />
+                <div className="h-12 bg-slate-200 rounded-xl animate-pulse w-full md:w-[15%]" />
+                <div className="h-12 bg-slate-200 rounded-xl animate-pulse w-full md:w-[20%]" />
+                <div className="h-12 bg-slate-200 rounded-xl animate-pulse w-full md:w-[20%]" />
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6">
+                {[...Array(10)].map((_, i) => (
+                  <div key={i} className="bg-white rounded-2xl border border-slate-100 p-4 shadow-sm flex flex-col gap-3">
+                    <div className="w-full aspect-[2/3] bg-slate-200 rounded-xl animate-pulse" />
+                    <div className="space-y-2 mt-2">
+                       <div className="h-4 bg-slate-200 rounded animate-pulse w-3/4" />
+                       <div className="h-3 bg-slate-200 rounded animate-pulse w-1/2" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           }>
             <CatalogSearch

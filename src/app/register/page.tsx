@@ -74,7 +74,8 @@ export default async function RegisterPage({
 
         <form className="mt-6 space-y-5" action={signup}>
           <div className="space-y-4">
-            <div>
+            <div className="space-y-1.5">
+              <label htmlFor="email" className="block text-sm font-medium text-slate-700 ml-1">Email Address</label>
               <div className="group relative">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors">
                   <Mail className="w-5 h-5" />
@@ -91,21 +92,22 @@ export default async function RegisterPage({
               </div>
             </div>
             
-
-
-            <div className="group relative">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors">
-                <Lock className="w-5 h-5" />
+            <div className="space-y-1.5">
+              <label htmlFor="password" className="block text-sm font-medium text-slate-700 ml-1">Password</label>
+              <div className="group relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-blue-500 transition-colors">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                  className="appearance-none block w-full pl-12 pr-4 py-3.5 border-2 border-slate-100 placeholder-slate-400 text-slate-900 rounded-2xl focus:outline-none focus:ring-0 focus:border-blue-500 bg-slate-50/50 focus:bg-white sm:text-sm font-medium transition-all"
+                  placeholder="Secure Password"
+                />
               </div>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="new-password"
-                required
-                className="appearance-none block w-full pl-12 pr-4 py-3.5 border-2 border-slate-100 placeholder-slate-400 text-slate-900 rounded-2xl focus:outline-none focus:ring-0 focus:border-blue-500 bg-slate-50/50 focus:bg-white sm:text-sm font-medium transition-all"
-                placeholder="Secure Password"
-              />
             </div>
           </div>
 

@@ -66,45 +66,51 @@ export default function LoginForm({ errorParams }: { errorParams?: string }) {
 
       <form className="mt-6 space-y-5" action={login}>
         <div className="space-y-4">
-          <div className="group relative">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-indigo-500 transition-colors">
-              <Mail className="w-5 h-5" />
+          <div className="space-y-1.5">
+            <label htmlFor="email" className="block text-sm font-medium text-slate-700 ml-1">Email Address</label>
+            <div className="group relative">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-indigo-500 transition-colors">
+                <Mail className="w-5 h-5" />
+              </div>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                required
+                className="appearance-none block w-full pl-12 pr-4 py-3.5 border-2 border-slate-100 placeholder-slate-400 text-slate-900 rounded-2xl focus:outline-none focus:ring-0 focus:border-indigo-500 bg-slate-50/50 focus:bg-white sm:text-sm font-medium transition-all"
+                placeholder="Library Email Address"
+              />
             </div>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              autoComplete="email"
-              required
-              className="appearance-none block w-full pl-12 pr-4 py-3.5 border-2 border-slate-100 placeholder-slate-400 text-slate-900 rounded-2xl focus:outline-none focus:ring-0 focus:border-indigo-500 bg-slate-50/50 focus:bg-white sm:text-sm font-medium transition-all"
-              placeholder="Library Email Address"
-            />
           </div>
-          <div className="group relative">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-indigo-500 transition-colors">
-              <Lock className="w-5 h-5" />
+          <div className="space-y-1.5">
+            <label htmlFor="password" className="block text-sm font-medium text-slate-700 ml-1">Password</label>
+            <div className="group relative">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-indigo-500 transition-colors">
+                <Lock className="w-5 h-5" />
+              </div>
+              <input
+                id="password"
+                name="password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
+                required
+                className="appearance-none block w-full pl-12 pr-12 py-3.5 border-2 border-slate-100 placeholder-slate-400 text-slate-900 rounded-2xl focus:outline-none focus:ring-0 focus:border-indigo-500 bg-slate-50/50 focus:bg-white sm:text-sm font-medium transition-all"
+                placeholder="Password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-indigo-500 transition-colors focus:outline-none"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? (
+                  <EyeOff className="w-5 h-5 focus-visible:ring-2 focus-visible:ring-indigo-500 rounded-full" />
+                ) : (
+                  <Eye className="w-5 h-5 focus-visible:ring-2 focus-visible:ring-indigo-500 rounded-full" />
+                )}
+              </button>
             </div>
-            <input
-              id="password"
-              name="password"
-              type={showPassword ? "text" : "password"}
-              autoComplete="current-password"
-              required
-              className="appearance-none block w-full pl-12 pr-12 py-3.5 border-2 border-slate-100 placeholder-slate-400 text-slate-900 rounded-2xl focus:outline-none focus:ring-0 focus:border-indigo-500 bg-slate-50/50 focus:bg-white sm:text-sm font-medium transition-all"
-              placeholder="Password"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-indigo-500 transition-colors focus:outline-none"
-              aria-label={showPassword ? "Hide password" : "Show password"}
-            >
-              {showPassword ? (
-                <EyeOff className="w-5 h-5 focus-visible:ring-2 focus-visible:ring-indigo-500 rounded-full" />
-              ) : (
-                <Eye className="w-5 h-5 focus-visible:ring-2 focus-visible:ring-indigo-500 rounded-full" />
-              )}
-            </button>
           </div>
         </div>
 

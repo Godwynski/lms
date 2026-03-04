@@ -1,6 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
-import { BookOpen } from 'lucide-react'
+// import { BookOpen } from 'lucide-react'
 import AddBookModal from './AddBookModal'
 import EditBookModal from './EditBookModal'
 import DeleteBookButton from './DeleteBookButton'
@@ -32,11 +32,10 @@ export default async function BooksAdminPage() {
         {/* Header Section */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-              <BookOpen className="w-6 h-6 text-indigo-600" />
+            <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">
               Library Inventory
             </h1>
-            <p className="text-sm text-slate-500 mt-1">Manage the books currently available in your catalog.</p>
+            <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider mt-2">Manage the books currently available in your catalog.</h2>
           </div>
           
           <AddBookModal />

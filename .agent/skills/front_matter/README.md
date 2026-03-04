@@ -28,15 +28,12 @@ To design and develop a web-based library book reservation, borrowing, and inven
 
 | Layer | Technology |
 |---|---|
-| **Frontend Framework** | Next.js 16 (App Router, Server Components, React 19) |
-| **Language** | TypeScript 5 |
-| **Styling & UI Components** | Tailwind CSS 4, Lucide Icons, Sonner (Toast Notifications) |
-| **Backend & Database** | Supabase (PostgreSQL, Auth, Storage, Realtime), `@supabase/ssr` |
-| **List Virtualization** | `@tanstack/react-virtual` (Efficient rendering of catalogs/records) |
-| **QR Code Processing** | `html5-qrcode` (Scanning), `qrcode.react` (Generation) |
+| **Frontend Framework** | Next.js (App Router, Server Components, React 19) |
+| **Language** | TypeScript |
+| **Styling & UI** | Tailwind CSS, Lucide Icons |
+| **Backend & Database** | Supabase (PostgreSQL, Auth, Storage, Realtime) |
 | **Image Processing** | `sharp` — server-side cover compression & WebP conversion |
 | **Security** | Row Level Security (RLS) policies over PostgREST API |
-| **Tooling & Dev Environments** | ESLint 9, PostCSS 4, `tsx`, `dotenv` |
 
 ### System Limitations & Considerations
 1. **Cloud Service Dependencies:** Operations require an active internet connection to communicate with the hosted Supabase database and authentication services.
