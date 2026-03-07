@@ -5,6 +5,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { adminCreateUser, adminUpdateUserRole, adminDeleteUser, adminUpdateStudentNumber } from './actions'
 import { extractStudentNumberFromEmail } from '@/lib/email-utils'
 import { UserPlus, Save, AlertCircle, X, CheckCircle2, MoreVertical, ShieldAlert, Trash2, Hash, Sparkles } from 'lucide-react'
+import { ConfirmDelete, ConfirmAction } from '@/lib/swal'
 
 
 // This defines the shape of the user profiles we fetch
@@ -52,7 +53,12 @@ export default function UsersClient({ profiles, currentUserRole }: { profiles: P
     
     const newRole = formData.get('role') as string
     if (newRole !== editingUser.role) {
-      if (!confirm(`Are you sure you want to change this user's role to ${newRole.replace(/_/g, ' ')}? This affects their system permissions.`)) {
+      const isConfirmed = await ConfirmAction(
+        'Change Role?',
+        `Are you sure you want to change this user's role to ${newRole.replace(/_/g, ' ')}? This affects their system permissions.`,
+        'Yes, change role'
+      )
+      if (!isConfirmed.isConfirmed) {
         return
       }
     }
@@ -75,7 +81,8 @@ export default function UsersClient({ profiles, currentUserRole }: { profiles: P
 
   const handleDelete = async () => {
     if (!editingUser) return
-    if (!confirm(`Are you sure you want to permanently delete ${editingUser.full_name || 'this user'}? This cannot be undone.`)) return
+    const isConfirmed = await ConfirmDelete(editingUser.full_name || 'this user')
+    if (!isConfirmed.isConfirmed) return
     
     setIsPending(true)
     setError(null)

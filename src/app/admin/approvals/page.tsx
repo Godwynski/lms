@@ -2,11 +2,12 @@ import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { Bookmark, ArrowLeft } from 'lucide-react'
-import ApprovalsClient from './ApprovalsClient'
+import ApprovalsLoader from './ApprovalsLoader'
 
 export default async function ApprovalsPage() {
   const supabase = await createClient()
 
+  // Auth + role guard remain server-side for security
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
@@ -14,21 +15,6 @@ export default async function ApprovalsPage() {
   if (!profile || !['super_admin', 'librarian', 'circulation_assistant'].includes(profile.role)) {
     redirect('/')
   }
-
-  // Fetch pending requests with details
-  const { data: pendingRequests } = await supabase
-    .from('borrowing_records')
-    .select(`
-      id,
-      status,
-      borrowed_date,
-      book_id,
-      books ( id, title, author, cover_image_url, isbn ),
-      borrower_id,
-      profiles:borrower_id ( full_name, email, student_number )
-    `)
-    .in('status', ['pending', 'pending_return'])
-    .order('borrowed_date', { ascending: true })
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-500/30 overflow-hidden relative">
@@ -43,15 +29,15 @@ export default async function ApprovalsPage() {
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Dashboard
           </Link>
-          
+
           <div className="flex items-center space-x-2 text-indigo-600 bg-indigo-50/80 backdrop-blur-sm px-4 py-2 rounded-xl border border-indigo-100 shadow-sm">
             <Bookmark className="w-5 h-5 text-indigo-500" />
             <span className="text-sm font-semibold capitalize">Borrow Approvals</span>
           </div>
         </div>
 
-        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-        <ApprovalsClient initialRequests={(pendingRequests as any) || []} />
+        {/* Approvals data sourced from local PowerSync SQLite */}
+        <ApprovalsLoader />
       </div>
     </div>
   )

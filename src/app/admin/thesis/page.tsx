@@ -2,11 +2,11 @@ import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, BookOpenText } from 'lucide-react'
-import ThesesAdminClient from './ThesesAdminClient'
+import ThesisAdminClient from './ThesisAdminClient'
 
 const STAFF_ROLES = ['super_admin', 'librarian', 'circulation_assistant']
 
-export default async function AdminThesesPage() {
+export default async function AdminThesisPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -14,7 +14,7 @@ export default async function AdminThesesPage() {
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
   if (!profile || !STAFF_ROLES.includes(profile.role)) redirect('/')
 
-  const { data: theses } = await supabase
+  const { data: thesisList } = await supabase
     .from('theses')
     .select('id, title, author, course, publication_year, abstract, pdf_url, created_at')
     .order('publication_year', { ascending: false })
@@ -34,13 +34,13 @@ export default async function AdminThesesPage() {
               <BookOpenText className="w-6 h-6 text-white" aria-hidden="true" />
             </div>
             <div>
-              <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">Manage Theses</h1>
+              <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">Manage Thesis</h1>
               <p className="text-sm text-slate-500">Add, edit, or remove research papers from the explorer.</p>
             </div>
           </div>
           <div className="flex gap-3">
             <Link
-              href="/theses"
+              href="/thesis"
               className="inline-flex items-center text-sm font-semibold text-violet-600 hover:text-violet-800 bg-violet-50 px-4 py-2.5 rounded-xl border border-violet-100 transition-colors"
             >
               <BookOpenText className="w-4 h-4 mr-2" aria-hidden="true" />
@@ -56,7 +56,7 @@ export default async function AdminThesesPage() {
           </div>
         </div>
 
-        <ThesesAdminClient theses={theses ?? []} />
+        <ThesisAdminClient thesisList={thesisList ?? []} />
       </div>
     </div>
   )

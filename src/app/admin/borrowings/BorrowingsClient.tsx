@@ -6,8 +6,9 @@ import {
   Search, BookOpen, AlertTriangle, CalendarDays, Clock,
   CheckCircle2, AlertCircle, CornerDownLeft, Loader2, BookMarked
 } from 'lucide-react'
-import { processDirectReturn } from './actions'
 import type { BorrowingRecord } from './page'
+import { ConfirmAction } from '@/lib/swal'
+import { useAdminBorrowingMutations } from '@/lib/powersync/hooks/useAdminBorrowingMutations'
 
 // Snapshot of current time at module load — avoids calling Date functions during render
 const MODULE_LOAD_TIME = Date.now()
@@ -57,17 +58,26 @@ export default function BorrowingsClient({ records: initialRecords }: { records:
   const [isPending, startTransition] = useTransition()
   const [processingId, setProcessingId] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const mutations = useAdminBorrowingMutations()
 
   const showFeedback = (message: string, type: 'success' | 'error') => {
     setFeedback({ message, type })
     setTimeout(() => setFeedback(null), 4000)
   }
 
-  const handleReturn = (record: BorrowingRecord) => {
+  const handleReturn = async (record: BorrowingRecord) => {
     if (!record.books) return
+
+    const isConfirmed = await ConfirmAction(
+      'Process Return?',
+      `Are you sure you want to mark "${record.books.title}" as returned?`,
+      'Yes, return book'
+    )
+    if (!isConfirmed.isConfirmed) return
+
     setProcessingId(record.id)
     startTransition(async () => {
-      const res = await processDirectReturn(record.id, record.books!.id)
+      const res = await mutations.directReturn(record.id, record.books!.id)
       setProcessingId(null)
       if (res.success) {
         setRecords(prev => prev.filter(r => r.id !== record.id))

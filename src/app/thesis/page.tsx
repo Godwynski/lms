@@ -1,21 +1,13 @@
-import { createClient } from '@/utils/supabase/server'
 import Link from 'next/link'
 import { ArrowLeft, BookOpenText } from 'lucide-react'
-import ThesisClient from './ThesisClient'
+import ThesisLoader from './ThesisLoader'
 
 export const metadata = {
   title: 'Thesis Explorer — STI College Alabang LMS',
-  description: 'Browse and read school research papers and theses from STI College Alabang.',
+  description: 'Browse and read school research papers and thesis papers from STI College Alabang.',
 }
 
-export default async function ThesesPage() {
-  const supabase = await createClient()
-
-  const { data: theses, error } = await supabase
-    .from('theses')
-    .select('id, title, author, course, publication_year, abstract, pdf_url, created_at')
-    .order('publication_year', { ascending: false })
-
+export default function ThesisPage() {
   return (
     <div className="min-h-screen bg-slate-50 font-sans selection:bg-violet-500/30">
       {/* Background blobs */}
@@ -34,7 +26,7 @@ export default async function ThesesPage() {
             <div>
               <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">Thesis Explorer</h1>
               <p className="text-sm text-slate-500 font-medium">
-                {theses?.length || 0} research paper{theses?.length !== 1 ? 's' : ''} from STI College Alabang
+                Research papers from STI College Alabang
               </p>
             </div>
           </div>
@@ -47,14 +39,10 @@ export default async function ThesesPage() {
           </Link>
         </div>
 
-        {error ? (
-          <div className="p-6 bg-red-50 text-red-600 rounded-2xl border border-red-100 font-medium">
-            Failed to load theses. Please try again later.
-          </div>
-        ) : (
-          <ThesisClient theses={theses ?? []} />
-        )}
+        {/* Data is now sourced from the local PowerSync SQLite database */}
+        <ThesisLoader />
       </div>
     </div>
   )
 }
+

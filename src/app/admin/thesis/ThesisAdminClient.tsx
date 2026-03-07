@@ -3,10 +3,11 @@
 import { useState } from 'react'
 import { Plus, Pencil, Trash2, BookOpenText, GraduationCap, Calendar, X, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 import { createThesis, updateThesis, deleteThesis } from './actions'
-import type { Thesis } from '@/app/theses/ThesisClient'
+import type { Thesis } from '@/app/thesis/ThesisClient'
+import { ConfirmDelete, ErrorAlert, SuccessAlert } from '@/lib/swal'
 
 type Props = {
-  theses: Thesis[]
+  thesisList: Thesis[]
 }
 
 type FormState = 'idle' | 'loading' | 'success' | 'error'
@@ -20,14 +21,13 @@ const emptyForm = {
   pdf_url: '',
 }
 
-export default function ThesesAdminClient({ theses: initialTheses }: Props) {
-  const [theses, setTheses] = useState(initialTheses)
+export default function ThesisAdminClient({ thesisList: initialThesisList }: Props) {
+  const [thesisList, setThesisList] = useState(initialThesisList)
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState<Thesis | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [formState, setFormState] = useState<FormState>('idle')
   const [formMessage, setFormMessage] = useState('')
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
 
   const openAdd = () => {
@@ -75,7 +75,7 @@ export default function ThesesAdminClient({ theses: initialTheses }: Props) {
     setFormMessage(editTarget ? 'Thesis updated!' : 'Thesis added!')
     // Optimistic update
     if (editTarget) {
-      setTheses(prev => prev.map(t => t.id === editTarget.id ? {
+      setThesisList(prev => prev.map(t => t.id === editTarget.id ? {
         ...t,
         title: form.title,
         author: form.author,
@@ -94,15 +94,18 @@ export default function ThesesAdminClient({ theses: initialTheses }: Props) {
     }, 1200)
   }
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (t: Thesis) => {
+    const isConfirmed = await ConfirmDelete(`"${t.title}"`)
+    if (!isConfirmed.isConfirmed) return
+
     setDeleteLoading(true)
-    const result = await deleteThesis(id)
+    const result = await deleteThesis(t.id)
     setDeleteLoading(false)
     if (result.error) {
-      alert(`Delete failed: ${result.error}`)
+      ErrorAlert('Delete failed', result.error)
     } else {
-      setTheses(prev => prev.filter(t => t.id !== id))
-      setDeleteConfirm(null)
+      SuccessAlert('Thesis deleted')
+      setThesisList(prev => prev.filter(item => item.id !== t.id))
     }
   }
 
@@ -111,7 +114,7 @@ export default function ThesesAdminClient({ theses: initialTheses }: Props) {
 
       {/* Actions bar */}
       <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">{theses.length} research paper{theses.length !== 1 ? 's' : ''} in the database</p>
+        <p className="text-sm text-slate-500">{thesisList.length} research paper{thesisList.length !== 1 ? 's' : ''} in the database</p>
         <button
           onClick={openAdd}
           className="inline-flex items-center gap-2 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold rounded-xl shadow-md shadow-violet-500/20 transition-all active:scale-95"
@@ -123,10 +126,10 @@ export default function ThesesAdminClient({ theses: initialTheses }: Props) {
 
       {/* Thesis Table */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-        {theses.length === 0 ? (
+        {thesisList.length === 0 ? (
           <div className="py-16 flex flex-col items-center text-slate-400 gap-3">
             <BookOpenText className="w-10 h-10 text-slate-200" aria-hidden="true" />
-            <p className="font-semibold text-slate-600">No theses yet</p>
+            <p className="font-semibold text-slate-600">No thesis papers yet</p>
             <p className="text-sm">Click &ldquo;Add Thesis&rdquo; to upload the first research paper.</p>
           </div>
         ) : (
@@ -143,7 +146,7 @@ export default function ThesesAdminClient({ theses: initialTheses }: Props) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {theses.map(t => (
+                {thesisList.map(t => (
                   <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-5 py-3.5 font-semibold text-slate-900 max-w-[200px] truncate">{t.title}</td>
                     <td className="px-5 py-3.5 text-slate-600 max-w-[140px] truncate">{t.author}</td>
@@ -176,9 +179,10 @@ export default function ThesesAdminClient({ theses: initialTheses }: Props) {
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => setDeleteConfirm(t.id)}
+                          onClick={() => handleDelete(t)}
+                          disabled={deleteLoading}
                           aria-label={`Delete ${t.title}`}
-                          className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                          className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-50"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -315,31 +319,6 @@ export default function ThesesAdminClient({ theses: initialTheses }: Props) {
         </div>
       )}
 
-      {/* ── Delete Confirm Modal ── */}
-      {deleteConfirm && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4" role="alertdialog" aria-modal="true" aria-labelledby="delete-confirm-title">
-          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setDeleteConfirm(null)} />
-          <div className="relative bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full animate-in zoom-in-95 duration-150">
-            <h3 id="delete-confirm-title" className="font-extrabold text-slate-900 text-base mb-2">Delete thesis?</h3>
-            <p className="text-sm text-slate-500 mb-5">This action cannot be undone. The thesis will be permanently removed from the database.</p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setDeleteConfirm(null)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleDelete(deleteConfirm)}
-                disabled={deleteLoading}
-                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
-              >
-                {deleteLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Deleting…</> : 'Yes, Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

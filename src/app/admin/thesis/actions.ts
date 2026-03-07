@@ -32,8 +32,8 @@ export async function createThesis(formData: FormData) {
   const { error: insertError } = await supabase.from('theses').insert(payload)
   if (insertError) return { error: insertError.message }
 
-  revalidatePath('/theses')
-  revalidatePath('/admin/theses')
+  revalidatePath('/thesis')
+  revalidatePath('/admin/thesis')
   return { success: true }
 }
 
@@ -55,8 +55,8 @@ export async function updateThesis(id: string, formData: FormData) {
   const { error: updateError } = await supabase.from('theses').update(payload).eq('id', id)
   if (updateError) return { error: updateError.message }
 
-  revalidatePath('/theses')
-  revalidatePath('/admin/theses')
+  revalidatePath('/thesis')
+  revalidatePath('/admin/thesis')
   return { success: true }
 }
 
@@ -67,7 +67,7 @@ export async function deleteThesis(id: string) {
   const { error: deleteError } = await supabase.from('theses').delete().eq('id', id)
   if (deleteError) return { error: deleteError.message }
 
-  revalidatePath('/theses')
-  revalidatePath('/admin/theses')
+  revalidatePath('/thesis')
+  revalidatePath('/admin/thesis')
   return { success: true }
 }

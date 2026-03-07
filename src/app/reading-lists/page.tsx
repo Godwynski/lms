@@ -1,33 +1,13 @@
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import ReadingListsClient from './ReadingListsClient'
+import ReadingListsLoader from './ReadingListsLoader'
 import { ArrowLeft, BookMarked } from 'lucide-react'
 
 export default async function ReadingListsPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
-
-  // Fetch user's reading lists with their books (nested join)
-  const { data: lists } = await supabase
-    .from('reading_lists')
-    .select(`
-      id,
-      name,
-      created_at,
-      reading_list_books (
-        id,
-        added_at,
-        book_id,
-        books (
-          id, title, author, cover_image_url, available_copies, total_copies, isbn, ddc_call_number
-        )
-      )
-    `)
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: true })
-
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -58,8 +38,10 @@ export default async function ReadingListsPage() {
           </div>
         </div>
 
-        <ReadingListsClient lists={lists || []} />
+        {/* Reading list data sourced from local PowerSync SQLite, scoped to user */}
+        <ReadingListsLoader userId={user.id} />
       </div>
     </div>
   )
 }
+

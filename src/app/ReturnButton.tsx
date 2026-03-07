@@ -3,11 +3,15 @@
 import { useState } from 'react'
 import { requestReturn } from './dashboardActions'
 import { RotateCcw } from 'lucide-react'
+import { ConfirmAction } from '@/lib/swal'
 
 export default function ReturnButton({ recordId }: { recordId: string }) {
   const [loading, setLoading] = useState(false)
 
   const handleReturn = async () => {
+    const isConfirmed = await ConfirmAction('Request Return?', 'Are you sure you want to request a return for this book?', 'Yes, request return')
+    if (!isConfirmed.isConfirmed) return
+
     setLoading(true)
     await requestReturn(recordId)
     // We don't need to unset loading; the page will refresh via revalidatePath

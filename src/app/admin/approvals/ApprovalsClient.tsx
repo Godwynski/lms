@@ -5,7 +5,8 @@ import Image from 'next/image'
 import { 
   CheckCircle2, XCircle, Search, Clock, BookOpen, AlertCircle, Loader2 
 } from 'lucide-react'
-import { approveRequest, rejectRequest, approveReturnRequest, rejectReturnRequest } from './actions'
+import { ConfirmAction } from '@/lib/swal'
+import { useAdminBorrowingMutations } from '@/lib/powersync/hooks/useAdminBorrowingMutations'
 
 type RequestData = {
   id: string
@@ -18,7 +19,6 @@ type RequestData = {
 }
 
 export default function ApprovalsClient({ initialRequests }: { initialRequests: RequestData[] }) {
-  // Normalize data for consistent mapping
   const normalizedRequests: RequestData[] = initialRequests.map(req => ({
     ...req,
     books: Array.isArray(req.books) ? req.books[0] : req.books,
@@ -29,18 +29,26 @@ export default function ApprovalsClient({ initialRequests }: { initialRequests: 
   const [searchQuery, setSearchQuery] = useState('')
   const [isPending, startTransition] = useTransition()
   const [feedback, setFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const mutations = useAdminBorrowingMutations()
 
   const showFeedback = (message: string, type: 'success' | 'error') => {
     setFeedback({ message, type })
     setTimeout(() => setFeedback(null), 3000)
   }
 
-  const handleApprove = (recordId: string, status: string, bookId: string) => {
+  const handleApprove = async (recordId: string, status: string, bookId: string) => {
+    const isConfirmed = await ConfirmAction(
+      'Approve Request?',
+      `Are you sure you want to approve this ${status === 'pending_return' ? 'return' : 'borrow'} request?`,
+      'Yes, approve'
+    )
+    if (!isConfirmed.isConfirmed) return
+
     startTransition(async () => {
       const res = status === 'pending_return'
-        ? await approveReturnRequest(recordId, bookId)
-        : await approveRequest(recordId)
-        
+        ? await mutations.approveReturn(recordId, bookId)
+        : await mutations.approve(recordId)
+
       if (res.success) {
         setRequests(prev => prev.filter(r => r.id !== recordId))
         showFeedback(status === 'pending_return' ? 'Return approved successfully.' : 'Borrow request approved successfully.', 'success')
@@ -50,11 +58,18 @@ export default function ApprovalsClient({ initialRequests }: { initialRequests: 
     })
   }
 
-  const handleReject = (recordId: string, status: string, bookId: string) => {
+  const handleReject = async (recordId: string, status: string, bookId: string) => {
+    const isConfirmed = await ConfirmAction(
+      'Reject Request?',
+      `Are you sure you want to reject this ${status === 'pending_return' ? 'return' : 'borrow'} request?`,
+      'Yes, reject'
+    )
+    if (!isConfirmed.isConfirmed) return
+
     startTransition(async () => {
       const res = status === 'pending_return'
-        ? await rejectReturnRequest(recordId)
-        : await rejectRequest(recordId, bookId)
+        ? await mutations.rejectReturn(recordId)
+        : await mutations.reject(recordId, bookId)
 
       if (res.success) {
         setRequests(prev => prev.filter(r => r.id !== recordId))

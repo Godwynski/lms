@@ -6,9 +6,10 @@ import Link from 'next/link'
 import {
   BookOpen, Plus, Trash2, X, Check, Loader2, BookMarked
 } from 'lucide-react'
-import { createReadingList, deleteReadingList, removeFromReadingList } from '../catalog/readingListActions'
+import { ConfirmDelete, ConfirmAction } from '@/lib/swal'
+import { useReadingListMutations } from '@/lib/powersync/hooks/useReadingListMutations'
 
-type Book = {
+export type Book = {
   id: string
   title: string
   author?: string
@@ -19,27 +20,26 @@ type Book = {
   ddc_call_number?: string
 }
 
-type ListBook = {
+export type ListBook = {
   id: string
   added_at: string
   book_id: string
   books: Book[]
 }
 
-type ReadingList = {
+export type ReadingList = {
   id: string
   name: string
   created_at: string
   reading_list_books: ListBook[]
 }
 
-export default function ReadingListsClient({ lists: initialLists }: { lists: ReadingList[] }) {
-  const [lists, setLists] = useState(initialLists)
+export default function ReadingListsClient({ lists, userId }: { lists: ReadingList[], userId: string }) {
   const [isCreating, setIsCreating] = useState(false)
   const [newListName, setNewListName] = useState('')
   const [isPending, startTransition] = useTransition()
   const [feedback, setFeedback] = useState<string | null>(null)
-  const [confirmDeleteList, setConfirmDeleteList] = useState<string | null>(null)
+  const mutations = useReadingListMutations(userId)
 
   const toast = (msg: string) => {
     setFeedback(msg)
@@ -49,9 +49,8 @@ export default function ReadingListsClient({ lists: initialLists }: { lists: Rea
   const handleCreateList = () => {
     if (!newListName.trim()) return
     startTransition(async () => {
-      const res = await createReadingList(newListName.trim())
-      if (res.success && res.list) {
-        setLists(prev => [...prev, { ...res.list, reading_list_books: [] }])
+      const res = await mutations.createList(newListName.trim())
+      if (res.success) {
         setNewListName('')
         setIsCreating(false)
         toast('Reading list created!')
@@ -61,12 +60,13 @@ export default function ReadingListsClient({ lists: initialLists }: { lists: Rea
     })
   }
 
-  const handleDeleteList = (listId: string) => {
+  const handleDeleteList = async (listId: string) => {
+    const isConfirmed = await ConfirmDelete('this reading list')
+    if (!isConfirmed.isConfirmed) return
+
     startTransition(async () => {
-      const res = await deleteReadingList(listId)
+      const res = await mutations.deleteList(listId)
       if (res.success) {
-        setLists(prev => prev.filter(l => l.id !== listId))
-        setConfirmDeleteList(null)
         toast('List deleted')
       } else {
         toast(res.error || 'Error deleting list')
@@ -74,15 +74,13 @@ export default function ReadingListsClient({ lists: initialLists }: { lists: Rea
     })
   }
 
-  const handleRemoveBook = (listId: string, bookId: string) => {
+  const handleRemoveBook = async (listId: string, bookId: string) => {
+    const isConfirmed = await ConfirmAction('Remove Book?', 'Are you sure you want to remove this book from your reading list?', 'Yes, remove')
+    if (!isConfirmed.isConfirmed) return
+
     startTransition(async () => {
-      const res = await removeFromReadingList(bookId, listId)
+      const res = await mutations.removeBook(bookId, listId)
       if (res.success) {
-        setLists(prev => prev.map(l =>
-          l.id === listId
-            ? { ...l, reading_list_books: l.reading_list_books.filter(lb => lb.book_id !== bookId) }
-            : l
-        ))
         toast('Book removed from list')
       } else {
         toast(res.error || 'Error removing book')
@@ -171,7 +169,7 @@ export default function ReadingListsClient({ lists: initialLists }: { lists: Rea
                   + Add Books
                 </Link>
                 <button
-                  onClick={() => setConfirmDeleteList(list.id)}
+                  onClick={() => handleDeleteList(list.id)}
                   className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
                   title="Delete list"
                 >
@@ -180,18 +178,7 @@ export default function ReadingListsClient({ lists: initialLists }: { lists: Rea
               </div>
             </div>
 
-            {/* Delete confirmation */}
-            {confirmDeleteList === list.id && (
-              <div className="px-5 py-3 bg-rose-50 border-b border-rose-100 flex items-center justify-between gap-4 animate-in slide-in-from-top-1 duration-150">
-                <p className="text-sm font-semibold text-rose-700">Delete &ldquo;{list.name}&rdquo;? This cannot be undone.</p>
-                <div className="flex gap-2">
-                  <button onClick={() => setConfirmDeleteList(null)} className="text-sm px-3 py-1.5 rounded-lg font-semibold text-slate-600 hover:bg-slate-100 transition-colors">Cancel</button>
-                  <button onClick={() => handleDeleteList(list.id)} disabled={isPending} className="text-sm px-3 py-1.5 rounded-lg font-semibold bg-rose-500 hover:bg-rose-600 text-white transition-colors">
-                    {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Delete'}
-                  </button>
-                </div>
-              </div>
-            )}
+
 
             {/* Books in list */}
             {list.reading_list_books.length === 0 ? (

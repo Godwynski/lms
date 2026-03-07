@@ -2,7 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, BookMarked } from 'lucide-react'
-import BorrowingsClient from './BorrowingsClient'
+import BorrowingsLoader from './BorrowingsLoader'
 
 export const metadata = {
   title: 'All Borrowings – Admin | LMS',
@@ -35,6 +35,7 @@ const STAFF_ROLES = ['super_admin', 'librarian', 'circulation_assistant']
 export default async function AdminBorrowingsPage() {
   const supabase = await createClient()
 
+  // Auth + role guard remain server-side for security
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
@@ -45,31 +46,6 @@ export default async function AdminBorrowingsPage() {
     .single()
 
   if (!profile || !STAFF_ROLES.includes(profile.role)) redirect('/')
-
-  // Fetch all active loans (borrowed or overdue) with book + borrower info
-  const { data: rawRecords } = await supabase
-    .from('borrowing_records')
-    .select(`
-      id,
-      status,
-      borrowed_date,
-      due_date,
-      returned_date,
-      book_id,
-      borrower_id,
-      books ( id, title, author, isbn, cover_image_url ),
-      profiles:borrower_id ( full_name, email, student_number )
-    `)
-    .in('status', ['pending', 'borrowed', 'overdue', 'pending_return'])
-    .order('due_date', { ascending: true })
-
-  // Normalize Supabase join results (can be array or object)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const records: BorrowingRecord[] = (rawRecords || []).map((r: any) => ({
-    ...r,
-    books: Array.isArray(r.books) ? r.books[0] : r.books,
-    profiles: Array.isArray(r.profiles) ? r.profiles[0] : r.profiles,
-  }))
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-500/30 overflow-hidden relative pb-20">
@@ -97,9 +73,11 @@ export default async function AdminBorrowingsPage() {
         </div>
 
         <div className="max-w-6xl mx-auto">
-          <BorrowingsClient records={records} />
+          {/* Borrowing data sourced from local PowerSync SQLite */}
+          <BorrowingsLoader />
         </div>
       </div>
     </div>
   )
 }
+

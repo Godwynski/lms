@@ -142,7 +142,7 @@ export default function NavClient({ role, name, initial, onSignOut }: NavClientP
             )}
 
             {(isBorrower || isStaff) && (
-              <DesktopLink href="/theses" icon={<BookOpenText className="w-4 h-4" aria-hidden="true" />} label="Theses" pathname={pathname} />
+              <DesktopLink href="/thesis" icon={<BookOpenText className="w-4 h-4" aria-hidden="true" />} label="Thesis" pathname={pathname} />
             )}
 
             {role === 'borrower' && (
@@ -181,7 +181,7 @@ export default function NavClient({ role, name, initial, onSignOut }: NavClientP
                     <DropdownItem href="/admin/checkout" icon={<ScanLine className="w-4 h-4" aria-hidden="true" />} label="Checkout Portal" pathname={pathname} />
                     <DropdownItem href="/admin/borrowings" icon={<History className="w-4 h-4" aria-hidden="true" />} label="All Borrowings" pathname={pathname} />
                     <DropdownItem href="/admin/approvals" icon={<Bookmark className="w-4 h-4" aria-hidden="true" />} label="Approvals" pathname={pathname} />
-                    <DropdownItem href="/admin/theses" icon={<BookOpenText className="w-4 h-4" aria-hidden="true" />} label="Manage Theses" pathname={pathname} />
+                    <DropdownItem href="/admin/thesis" icon={<BookOpenText className="w-4 h-4" aria-hidden="true" />} label="Manage Thesis" pathname={pathname} />
                     <DropdownItem href="/admin/data-hub" icon={<Database className="w-4 h-4" aria-hidden="true" />} label="Data Hub" pathname={pathname} />
                     <DropdownItem href="/admin/audit" icon={<ScanLine className="w-4 h-4" aria-hidden="true" />} label="Audit Mode" pathname={pathname} />
                     <DropdownItem href="/admin/users" icon={<Users className="w-4 h-4" aria-hidden="true" />} label="Users" pathname={pathname} />
@@ -254,7 +254,7 @@ export default function NavClient({ role, name, initial, onSignOut }: NavClientP
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 ml-2">Main Menu</p>
               <MobileLink href="/" icon={<LayoutDashboard className="w-5 h-5" aria-hidden="true" />} label="Dashboard" pathname={pathname} exact />
               {isBorrower && <MobileLink href="/catalog" icon={<Search className="w-5 h-5" aria-hidden="true" />} label="Catalog" pathname={pathname} />}
-              {(isBorrower || isStaff) && <MobileLink href="/theses" icon={<BookOpenText className="w-5 h-5" aria-hidden="true" />} label="Thesis Explorer" pathname={pathname} />}
+              {(isBorrower || isStaff) && <MobileLink href="/thesis" icon={<BookOpenText className="w-5 h-5" aria-hidden="true" />} label="Thesis Explorer" pathname={pathname} />}
               {role === 'borrower' && (
                 <>
                   <MobileLink href="/borrowings" icon={<History className="w-5 h-5" aria-hidden="true" />} label="My Borrowings" pathname={pathname} />
@@ -271,7 +271,7 @@ export default function NavClient({ role, name, initial, onSignOut }: NavClientP
                 <MobileLink href="/admin/checkout" icon={<ScanLine className="w-5 h-5" aria-hidden="true" />} label="Checkout Portal" pathname={pathname} />
                 <MobileLink href="/admin/borrowings" icon={<History className="w-5 h-5" aria-hidden="true" />} label="All Borrowings" pathname={pathname} />
                 <MobileLink href="/admin/approvals" icon={<Bookmark className="w-5 h-5" aria-hidden="true" />} label="Approvals" pathname={pathname} />
-                <MobileLink href="/admin/theses" icon={<BookOpenText className="w-5 h-5" aria-hidden="true" />} label="Manage Theses" pathname={pathname} />
+                <MobileLink href="/admin/thesis" icon={<BookOpenText className="w-5 h-5" aria-hidden="true" />} label="Manage Thesis" pathname={pathname} />
                 <MobileLink href="/admin/data-hub" icon={<Database className="w-5 h-5" aria-hidden="true" />} label="Data Hub" pathname={pathname} />
                 <MobileLink href="/admin/audit" icon={<ScanLine className="w-5 h-5" aria-hidden="true" />} label="Audit Mode" pathname={pathname} />
                 <MobileLink href="/admin/users" icon={<Users className="w-5 h-5" aria-hidden="true" />} label="Users" pathname={pathname} />

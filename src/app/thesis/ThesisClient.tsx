@@ -15,23 +15,23 @@ export type Thesis = {
 }
 
 type Props = {
-  theses: Thesis[]
+  thesisList: Thesis[]
 }
 
-export default function ThesisClient({ theses }: Props) {
+export default function ThesisClient({ thesisList }: Props) {
   const [query, setQuery] = useState('')
   const [selectedThesis, setSelectedThesis] = useState<Thesis | null>(null)
   const [courseFilter, setCourseFilter] = useState('All')
 
   // Derive unique courses for filter
   const courses = useMemo(() => {
-    const set = new Set(theses.map(t => t.course).filter(Boolean) as string[])
+    const set = new Set(thesisList.map(t => t.course).filter(Boolean) as string[])
     return ['All', ...Array.from(set).sort()]
-  }, [theses])
+  }, [thesisList])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return theses.filter(t => {
+    return thesisList.filter(t => {
       const matchQuery =
         !q ||
         t.title.toLowerCase().includes(q) ||
@@ -41,7 +41,7 @@ export default function ThesisClient({ theses }: Props) {
       const matchCourse = courseFilter === 'All' || t.course === courseFilter
       return matchQuery && matchCourse
     })
-  }, [theses, query, courseFilter])
+  }, [thesisList, query, courseFilter])
 
   return (
     <div className="space-y-6">
@@ -56,7 +56,7 @@ export default function ThesisClient({ theses }: Props) {
             onChange={e => setQuery(e.target.value)}
             placeholder="Search by title, author, or course…"
             className="w-full pl-12 pr-10 py-3.5 rounded-2xl border border-slate-200 bg-white shadow-sm text-slate-900 font-medium focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-400 transition-all"
-            aria-label="Search theses"
+            aria-label="Search thesis papers"
           />
           {query && (
             <button
@@ -81,9 +81,9 @@ export default function ThesisClient({ theses }: Props) {
 
       {/* ── Results count ── */}
       <p className="text-sm text-slate-500 font-medium">
-        {filtered.length === theses.length
-          ? `${theses.length} research papers`
-          : `${filtered.length} of ${theses.length} papers`}
+        {filtered.length === thesisList.length
+          ? `${thesisList.length} research papers`
+          : `${filtered.length} of ${thesisList.length} papers`}
       </p>
 
       {/* ── Thesis Grid ── */}
@@ -137,7 +137,7 @@ export default function ThesisClient({ theses }: Props) {
       ) : (
         <div className="py-20 flex flex-col items-center text-slate-500 bg-white rounded-3xl border border-slate-100">
           <BookOpenText className="w-10 h-10 text-slate-300 mb-3" aria-hidden="true" />
-          <p className="font-semibold text-slate-700">No theses found</p>
+          <p className="font-semibold text-slate-700">No thesis papers found</p>
           <p className="text-sm mt-1">Try a different search or course filter.</p>
           {(query || courseFilter !== 'All') && (
             <button
