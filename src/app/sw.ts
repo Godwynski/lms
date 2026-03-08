@@ -11,7 +11,6 @@ declare global {
 declare const self: ServiceWorkerGlobalScope;
 
 // ─── Image preload cache names ───────────────────────────────────────────────
-const SUPABASE_IMAGES_CACHE = "supabase-images-cache";
 const BOOK_COVERS_CACHE = "book-covers-cache";
 
 const serwist = new Serwist({
@@ -25,19 +24,6 @@ const serwist = new Serwist({
       matcher: /^https:\/\/fonts\.googleapis\.com\/.*/i,
       handler: new CacheFirst({
         cacheName: "google-fonts-cache",
-        plugins: [
-          {
-            cacheWillUpdate: async ({ response }) =>
-              response.status === 0 || response.status === 200 ? response : null,
-          },
-        ],
-      }),
-    },
-    {
-      // Cache Supabase storage images (book covers uploaded by admins)
-      matcher: /^https:\/\/.*\.supabase\.co\/storage\/.*/i,
-      handler: new CacheFirst({
-        cacheName: SUPABASE_IMAGES_CACHE,
         plugins: [
           {
             cacheWillUpdate: async ({ response }) =>
@@ -89,17 +75,14 @@ serwist.addEventListeners();
   const urls: string[] = event.data.urls ?? [];
   if (!urls.length) return;
 
-  // Open the correct cache per URL origin
-  const supabaseCache = await caches.open(SUPABASE_IMAGES_CACHE);
   const coversCache = await caches.open(BOOK_COVERS_CACHE);
 
   const tasks = urls.map(async (url) => {
     try {
-      const cache = url.includes("supabase.co") ? supabaseCache : coversCache;
-      const already = await cache.match(url);
+      const already = await coversCache.match(url);
       if (already) return; // Already cached — skip
       const response = await fetch(url, { mode: "cors" });
-      if (response.ok) await cache.put(url, response);
+      if (response.ok) await coversCache.put(url, response);
     } catch {
       // Non-critical: network unavailable or CORS error — skip silently
     }

@@ -37,7 +37,7 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-import { PowerSyncProvider } from '@/lib/powersync/PowerSyncProvider';
+import { PouchDBProvider } from '@/lib/pouchdb/PouchDBProvider';
 import SyncStatusBadge from '@/components/SyncStatusBadge';
 import SyncErrorBanner from '@/components/SyncErrorBanner';
 
@@ -54,12 +54,12 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased selection:bg-indigo-500/30 font-sans`}
       >
-        <PowerSyncProvider>
+        <PouchDBProvider>
           <SyncErrorBanner />
           <NavBar />
           {children}
           <SyncStatusBadge />
-        </PowerSyncProvider>
+        </PouchDBProvider>
         <Toaster position="bottom-center" richColors theme="light" />
       </body>
     </html>

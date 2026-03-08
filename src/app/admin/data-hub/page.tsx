@@ -1,8 +1,9 @@
-import { createClient } from '@/utils/supabase/server'
+import { getSession, getAdminDb } from '@/lib/auth/couchdb'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Database } from 'lucide-react'
 import DataHubClient from './DataHubClient'
+
 
 const STAFF_ROLES = ['super_admin', 'librarian', 'circulation_assistant']
 
@@ -11,12 +12,26 @@ export const metadata = {
 }
 
 export default async function DataHubPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) redirect('/login')
 
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!profile || !STAFF_ROLES.includes(profile.role)) redirect('/')
+  const roles = session?.userCtx?.roles || []
+  let hasAccess = STAFF_ROLES.some(r => roles.includes(r))
+  
+  if (!hasAccess) {
+    try {
+      const db = await getAdminDb()
+      const profileDocs = await db.find({ selector: { type: 'profile', user_id: userId } })
+      if (profileDocs.docs.length > 0 && STAFF_ROLES.includes(String((profileDocs.docs[0] as unknown as Record<string, unknown>)?.role ?? ''))) {
+        hasAccess = true
+      }
+    } catch {
+      // Non-critical: fall through
+    }
+  }
+  
+  if (!hasAccess) redirect('/')
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans">

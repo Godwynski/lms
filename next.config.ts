@@ -15,6 +15,7 @@ const nextConfig: NextConfig = {
   // Turbopack handles WASM and browser module resolution natively,
   // so no extra rules are needed here (unlike the webpack config below).
   turbopack: {},
+  serverExternalPackages: ['pouchdb', 'pouchdb-find'],
 
   images: {
     remotePatterns: [

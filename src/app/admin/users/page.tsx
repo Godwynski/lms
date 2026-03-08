@@ -1,58 +1,40 @@
-import { createClient } from '@/utils/supabase/server'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
+import { getSession, getAdminDb } from '@/lib/auth/couchdb'
 import { redirect } from 'next/navigation'
 import UsersClient from './UsersClient'
 
-export default async function UsersPage() {
-  const supabase = await createClient()
-  
-  // 1. Authenticate Request
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
 
-  // 2. Authorize Request (Admin/Staff only)
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  
-  if (!profile || !['super_admin', 'librarian', 'circulation_assistant'].includes(profile.role)) {
+export default async function UsersPage() {
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) redirect('/login')
+
+  const db = await getAdminDb()
+
+  type ProfileDoc = Record<string, unknown> & { _id: string }
+  const profileDocs = await db.find({ selector: { type: 'profile', user_id: userId } })
+  const profile = profileDocs.docs[0] as unknown as ProfileDoc | undefined
+
+  const roles = session?.userCtx?.roles || []
+  let hasAccess = ['super_admin', 'librarian', 'circulation_assistant'].some(r => roles.includes(r))
+  if (!hasAccess && profile && ['super_admin', 'librarian', 'circulation_assistant'].includes(String(profile.role ?? ''))) {
+    hasAccess = true
+  }
+
+  if (!hasAccess) {
     redirect('/')
   }
 
-  // 3. Fetch ALL auth users via the Admin API (Service Role) — this is authoritative
-  const supabaseAdmin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  )
-
-  const { data: { users: authUsers }, error: authError } = await supabaseAdmin.auth.admin.listUsers({
-    perPage: 1000,
-  })
+  const allProfilesRes = await db.find({ selector: { type: 'profile' } })
   
-  if (authError) {
-    console.error('Failed to load auth users:', authError)
-  }
-
-  // 4. Also fetch profiles for extra info (role, full_name, student_number)
-  const { data: profiles } = await supabase
-    .from('profiles')
-    .select('id, full_name, role, email, created_at, student_number')
-
-  const profileMap = new Map((profiles || []).map(p => [p.id, p]))
-
-  // 5. Merge: for every auth user, attach profile data (or defaults)
-  const mergedUsers = (authUsers || []).map(authUser => {
-    const p = profileMap.get(authUser.id)
-    return {
-      id: authUser.id,
-      email: authUser.email || '',
-      full_name: p?.full_name || authUser.user_metadata?.full_name || null,
-      role: p?.role || authUser.user_metadata?.role || 'borrower',
-      student_number: p?.student_number || null,
-      created_at: authUser.created_at,
-      last_sign_in_at: authUser.last_sign_in_at || null,
-    }
-  })
-
+  const mergedUsers = (allProfilesRes.docs as unknown as ProfileDoc[]).map((p) => ({
+    id: String(p.user_id ?? ''), // we map CouchDB user name / id to this
+    email: String(p.email ?? p.user_id ?? ''),
+    full_name: String(p.full_name ?? 'Unknown'),
+    role: String(p.role ?? 'borrower'),
+    student_number: p.student_number != null ? String(p.student_number) : null,
+    created_at: String(p.created_at ?? new Date().toISOString()),
+    last_sign_in_at: p.last_sign_in_at != null ? String(p.last_sign_in_at) : null,
+  }))
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 sm:p-12">
@@ -62,7 +44,7 @@ export default async function UsersPage() {
       </div>
 
       <div className="relative z-10 w-full max-w-7xl mx-auto">
-         <UsersClient profiles={mergedUsers} currentUserRole={profile.role} />
+         <UsersClient profiles={mergedUsers} currentUserRole={profile?.role != null ? String(profile.role) : 'librarian'} />
       </div>
     </div>
   )

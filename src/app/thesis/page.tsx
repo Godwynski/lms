@@ -39,7 +39,7 @@ export default function ThesisPage() {
           </Link>
         </div>
 
-        {/* Data is now sourced from the local PowerSync SQLite database */}
+        {/* Data is now sourced from the local PouchDB database */}
         <ThesisLoader />
       </div>
     </div>

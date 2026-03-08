@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import type { BorrowingRecord } from './page'
 import { ConfirmAction } from '@/lib/swal'
-import { useAdminBorrowingMutations } from '@/lib/powersync/hooks/useAdminBorrowingMutations'
+import { useAdminBorrowingMutations } from '@/lib/pouchdb/hooks/useAdminBorrowingMutations'
 
 // Snapshot of current time at module load — avoids calling Date functions during render
 const MODULE_LOAD_TIME = Date.now()

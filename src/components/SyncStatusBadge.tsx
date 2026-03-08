@@ -3,7 +3,7 @@
 /**
  * SyncStatusBadge
  *
- * A pill-shaped badge that shows real-time PowerSync sync state.
+ * A pill-shaped badge that shows real-time PouchDB sync state.
  * Positioning: fixed bottom-right on desktop, bottom-left on mobile
  * (away from the bottom nav area so nothing gets covered).
  *
@@ -13,45 +13,28 @@
  *  • offline   – lightning bolt + "Offline" (amber)
  */
 
-import { usePowerSyncStatus } from '@powersync/react'
+import { usePouchDbSyncStatus, type SyncPhase } from '@/lib/pouchdb/hooks/usePouchDbSyncStatus'
 import { useEffect, useState } from 'react'
 import { RefreshCw, Wifi, WifiOff } from 'lucide-react'
 
-type SyncPhase = 'syncing' | 'online' | 'offline'
-
 export default function SyncStatusBadge() {
-  const status = usePowerSyncStatus()
+  const syncPhase = usePouchDbSyncStatus()
   const [phase, setPhase] = useState<SyncPhase>('offline')
   const [visible, setVisible] = useState(true)
   const [autoHideTimer, setAutoHideTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    const connected = status?.connected ?? false
-    const connecting = status?.connecting ?? false
-    const uploading = status?.dataFlowStatus?.uploading ?? false
-    const downloading = status?.dataFlowStatus?.downloading ?? false
-    const syncing = uploading || downloading || connecting
-
-    let next: SyncPhase
-    if (!connected && !connecting) {
-      next = 'offline'
-    } else if (syncing) {
-      next = 'syncing'
-    } else {
-      next = 'online'
-    }
-
-    setPhase(next)
+    setPhase(syncPhase)
     setVisible(true)
 
     // Auto-hide the "Synced" state after 3 s — keeps the UI clean
     if (autoHideTimer) clearTimeout(autoHideTimer)
-    if (next === 'online') {
+    if (syncPhase === 'online') {
       const t = setTimeout(() => setVisible(false), 3000)
       setAutoHideTimer(t)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status?.connected, status?.connecting, status?.dataFlowStatus?.uploading, status?.dataFlowStatus?.downloading])
+  }, [syncPhase])
 
   if (!visible) {
     // Render a tiny ghost dot so users can hover to reveal the badge

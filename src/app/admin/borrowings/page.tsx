@@ -1,12 +1,8 @@
-import { createClient } from '@/utils/supabase/server'
+import { getSession, getAdminDb } from '@/lib/auth/couchdb'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, BookMarked } from 'lucide-react'
 import BorrowingsLoader from './BorrowingsLoader'
-
-export const metadata = {
-  title: 'All Borrowings – Admin | LMS',
-}
 
 export type BorrowingRecord = {
   id: string
@@ -16,36 +12,49 @@ export type BorrowingRecord = {
   returned_date: string | null
   book_id: string
   borrower_id: string
-  books: {
+  books?: {
     id: string
     title: string
     author: string | null
     isbn: string
     cover_image_url: string | null
-  } | null
-  profiles: {
+  }
+  profiles?: {
     full_name: string | null
     email: string
     student_number: string | null
-  } | null
+  }
+}
+
+
+
+export const metadata = {
+  title: 'All Borrowings – Admin | LMS',
 }
 
 const STAFF_ROLES = ['super_admin', 'librarian', 'circulation_assistant']
 
 export default async function AdminBorrowingsPage() {
-  const supabase = await createClient()
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) redirect('/login')
 
-  // Auth + role guard remain server-side for security
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  const db = await getAdminDb()
+  const roles = session?.userCtx?.roles || []
+  let hasAccess = STAFF_ROLES.some(r => roles.includes(r))
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single()
+  if (!hasAccess) {
+    try {
+      const profileDocs = await db.find({ selector: { type: 'profile', user_id: userId } })
+      if (profileDocs.docs.length > 0 && STAFF_ROLES.includes(String((profileDocs.docs[0] as unknown as Record<string, unknown>)?.role ?? ''))) {
+        hasAccess = true
+      }
+    } catch {
+      // Non-critical: fall through
+    }
+  }
 
-  if (!profile || !STAFF_ROLES.includes(profile.role)) redirect('/')
+  if (!hasAccess) redirect('/')
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-500/30 overflow-hidden relative pb-20">
@@ -73,7 +82,7 @@ export default async function AdminBorrowingsPage() {
         </div>
 
         <div className="max-w-6xl mx-auto">
-          {/* Borrowing data sourced from local PowerSync SQLite */}
+          {/* Borrowing data sourced from local PouchDB */}
           <BorrowingsLoader />
         </div>
       </div>

@@ -1,70 +1,98 @@
 'use server'
 
-import { createClient } from '@/utils/supabase/server'
+import { getSession } from '@/lib/auth/couchdb'
 import { revalidatePath } from 'next/cache'
+import PouchDB from 'pouchdb'
+import PouchDBFind from 'pouchdb-find'
+
+PouchDB.plugin(PouchDBFind)
+
+const COUCHDB_URL = process.env.NEXT_PUBLIC_COUCHDB_URL || 'http://localhost:5984'
+
+async function getDb() {
+  return new PouchDB(`${COUCHDB_URL}/lms`, { skip_setup: true })
+}
 
 export async function submitReview(bookId: string, rating: number, reviewText: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
-  if (!user) {
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) {
     return { success: false, error: 'You must be logged in to review.' }
   }
 
-  // Check if user has already reviewed
-  const { data: existing } = await supabase
-    .from('book_reviews')
-    .select('id')
-    .eq('user_id', user.id)
-    .eq('book_id', bookId)
-    .single()
+  try {
+    const db = await getDb()
 
-  if (existing) {
-    const { error } = await supabase
-      .from('book_reviews')
-      .update({ rating, review_text: reviewText, updated_at: new Date().toISOString() })
-      .eq('id', existing.id)
+    // Check if user has already reviewed
+    const existingRes = await db.find({
+      selector: { type: 'book_review', user_id: userId, book_id: bookId }
+    })
 
-    if (error) return { success: false, error: error.message }
-  } else {
-    const { error } = await supabase
-      .from('book_reviews')
-      .insert({
-        book_id: bookId,
-        user_id: user.id,
+    if (existingRes.docs.length > 0) {
+      const existing = existingRes.docs[0]
+      await db.put({
+        ...existing,
         rating,
         review_text: reviewText,
+        updated_at: new Date().toISOString()
       })
+    } else {
+      await db.post({
+        type: 'book_review',
+        book_id: bookId,
+        user_id: userId,
+        rating,
+        review_text: reviewText,
+        created_at: new Date().toISOString()
+      })
+    }
 
-    if (error) return { success: false, error: error.message }
+    revalidatePath('/catalog')
+    return { success: true }
+  } catch (error: unknown) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
   }
-
-  revalidatePath('/catalog')
-  return { success: true }
 }
 
 export async function getReviews(bookId: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const session = await getSession()
+  const userId = session?.userCtx?.name
   
-  const { data, error } = await supabase
-    .from('book_reviews')
-    .select('id, rating, review_text, created_at, user_id, profiles(full_name)')
-    .eq('book_id', bookId)
-    .order('created_at', { ascending: false })
+  try {
+    const db = await getDb()
+    
+    const reviewsRes = await db.find({
+      selector: { type: 'book_review', book_id: bookId }
+    })
 
-  if (error) return { success: false, error: error.message }
+    // To mock profiles(full_name), we can either join with a users database or return the generic userId.
+    // For local first PouchDB, usually profiles are duplicated into the document or fetched from another db. Let's just use the userId as full_name for now.
+    const mappedReviews = reviewsRes.docs.map((d) => {
+      const doc = d as unknown as Record<string, unknown> & { _id: string }
+      return {
+        id: doc._id,
+        rating: Number(doc.rating),
+        review_text: String(doc.review_text),
+        created_at: String(doc.created_at),
+        user_id: String(doc.user_id),
+        profiles: { full_name: String(doc.user_id) } // Mock profile
+      }
+    })
 
-  let hasBorrowed = false
-  if (user) {
-    const { data: borrowed } = await supabase
-      .from('borrowing_records')
-      .select('id')
-      .eq('book_id', bookId)
-      .eq('borrower_id', user.id)
-      .limit(1)
-    hasBorrowed = !!(borrowed && borrowed.length > 0)
+    // Sort by created_at descending
+    mappedReviews.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+    let hasBorrowed = false
+    if (userId) {
+      const borrowedRes = await db.find({
+        selector: { type: 'borrowing_record', book_id: bookId, borrower_id: userId },
+        limit: 1
+      })
+      hasBorrowed = borrowedRes.docs.length > 0
+    }
+
+    return { success: true, reviews: mappedReviews, hasBorrowed }
+  } catch (error: unknown) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
   }
-
-  return { success: true, reviews: data, hasBorrowed }
 }

@@ -1,13 +1,43 @@
 'use server'
 
-import { createClient } from '@/utils/supabase/server'
+import { getSession, getAdminDb } from '@/lib/auth/couchdb'
 import { revalidatePath } from 'next/cache'
 
-// Parses a checkout scan into type + identifiers
+
+
+const STAFF_ROLES = ['super_admin', 'librarian', 'circulation_assistant']
+
+type PouchDoc = Record<string, unknown> & { _id: string; _rev: string }
+
+// Utility to verify staff role
+async function verifyStaff() {
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) return { error: 'Unauthorized' }
+
+  const db = await getAdminDb()
+  const roles = session?.userCtx?.roles || []
+  let hasAccess = STAFF_ROLES.some(r => roles.includes(r))
+
+  if (!hasAccess) {
+    try {
+      const profileDocs = await db.find({ selector: { type: 'profile', user_id: userId } })
+      const firstDoc = profileDocs.docs[0] as unknown as PouchDoc
+      if (profileDocs.docs.length > 0 && STAFF_ROLES.includes(String(firstDoc?.role ?? ''))) {
+        hasAccess = true
+      }
+    } catch {
+      // Non-critical: fall through, access remains false
+    }
+  }
+
+  if (!hasAccess) return { error: 'Unauthorized to perform checkouts' }
+  return { db, userId }
+}
+
 function parseCheckoutScan(raw: string) {
   if (raw.startsWith('STICAL-LMS:USER:')) {
     const parts = raw.split(':')
-    // Format: STICAL-LMS:USER:{userId}:{studentNumber?}
     return { type: 'libraryCard' as const, userId: parts[2], studentNumber: parts[3] }
   }
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -18,130 +48,121 @@ function parseCheckoutScan(raw: string) {
 }
 
 export async function lookupUser(scannedData: string) {
-  const supabase = await createClient()
-
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized' }
-
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!profile || !['super_admin', 'librarian', 'circulation_assistant'].includes(profile.role)) {
-    return { error: 'Unauthorized to perform checkouts' }
-  }
+  const { error, db } = await verifyStaff()
+  if (error || !db) return { error }
 
   const parsed = parseCheckoutScan(scannedData.trim())
 
-  let borrowerProfile = null
+  let borrowerProfile: PouchDoc | null = null
 
   if (parsed.type === 'libraryCard' || parsed.type === 'uuid') {
-    // Look up by user ID
-    const { data } = await supabase
-      .from('profiles')
-      .select('id, full_name, role, student_number')
-      .eq('id', parsed.userId)
-      .single()
-    borrowerProfile = data
+    const res = await db.find({ selector: { type: 'profile', user_id: parsed.userId } })
+    if (res.docs.length > 0) borrowerProfile = res.docs[0] as unknown as PouchDoc
   } else {
-    // Look up by student number
-    const { data } = await supabase
-      .from('profiles')
-      .select('id, full_name, role, student_number')
-      .eq('student_number', parsed.studentNumber)
-      .single()
-    borrowerProfile = data
+    const res = await db.find({ selector: { type: 'profile', student_number: parsed.studentNumber } })
+    if (res.docs.length > 0) borrowerProfile = res.docs[0] as unknown as PouchDoc
   }
 
   if (!borrowerProfile) return { error: 'Borrower not found. Check the QR or student number and try again.' }
-  return { user: borrowerProfile }
+  return { user: { ...borrowerProfile, id: borrowerProfile.user_id } }
 }
 
 export async function lookupUserByStudentNumber(studentNumber: string) {
-  const supabase = await createClient()
+  const { error, db } = await verifyStaff()
+  if (error || !db) return { error }
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized' }
-
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('id, full_name, role, student_number')
-    .eq('student_number', studentNumber.trim())
-    .single()
-
-  if (error || !data) return { error: 'No borrower found with that student number.' }
-  return { user: data }
+  const res = await db.find({ selector: { type: 'profile', student_number: studentNumber.trim() } })
+  if (res.docs.length === 0) return { error: 'No borrower found with that student number.' }
+  
+  const borrowerProfile = res.docs[0] as unknown as PouchDoc
+  return { user: { ...borrowerProfile, id: borrowerProfile.user_id } }
 }
 
-
 export async function lookupOrAddBook(isbn: string) {
-  const supabase = await createClient()
+  const { error, db } = await verifyStaff()
+  if (error || !db) return { error }
 
-  // 1. Check local DB first
-  const { data: existingBook } = await supabase.from('books').select('*').eq('isbn', isbn).single()
-  
-  if (existingBook) {
-    return { book: existingBook }
+  const res = await db.find({ selector: { type: 'book', isbn } })
+  if (res.docs.length > 0) {
+    const book = res.docs[0] as unknown as PouchDoc
+    return { book: { ...book, id: book._id } }
   }
 
-  // 2. Not in local DB, fetch from Open Library
   try {
     const response = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`)
-    const data = await response.json()
+    const data = await response.json() as Record<string, Record<string, unknown>>
     const bookData = data[`ISBN:${isbn}`]
 
     if (!bookData) {
       return { error: 'Book not found in Open Library' }
     }
 
-    const title = bookData.title || 'Unknown Title'
-    const author = bookData.authors?.[0]?.name || 'Unknown Author'
-    const cover_url = bookData.cover?.large || bookData.cover?.medium || null
+    const authors = bookData.authors as Array<{ name: string }> | undefined
+    const cover = bookData.cover as Record<string, string> | undefined
 
-    // 3. Insert new book
-    const { data: newBook, error: insertError } = await supabase.from('books').insert({
+    const title = String(bookData.title ?? 'Unknown Title')
+    const author = authors?.[0]?.name ?? 'Unknown Author'
+    const cover_url = cover?.large ?? cover?.medium ?? null
+
+    const newBook = {
+      _id: `book_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      type: 'book',
       isbn,
       title,
       author,
-      cover_url,
+      cover_image_url: cover_url, 
       total_copies: 1,
-      available_copies: 1
-    }).select().single()
+      available_copies: 1,
+      created_at: new Date().toISOString()
+    }
 
-    if (insertError) {
-      console.error('Error inserting book:', insertError)
+    try {
+      await db.put(newBook)
+    } catch {
       return { error: 'Failed to save book to database' }
     }
 
     revalidatePath('/admin/checkout')
-    return { book: newBook, isNew: true }
+    return { book: { ...newBook, id: newBook._id }, isNew: true }
 
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Open Library API Error:', err)
     return { error: 'Failed to look up book ISBN' }
   }
 }
 
 export async function processCheckout(borrowerId: string, bookId: string) {
-  const supabase = await createClient()
+  const { error, db } = await verifyStaff()
+  if (error || !db) return { error }
 
-  // Verify caller is admin/staff
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized' }
+  try {
+    const book = await db.get(bookId) as unknown as PouchDoc
+    if (Number(book.available_copies ?? 0) <= 0) {
+      return { error: 'No copies available for checkout.' }
+    }
 
-  // Use the atomic stored procedure instead of independent reads/writes
-  // This prevents race conditions where two admins check out the last copy simultaneously
-  const { data, error } = await supabase.rpc('atomic_checkout', {
-    p_borrower_id: borrowerId,
-    p_book_id: bookId
-  })
+    await db.put({ ...book, available_copies: Number(book.available_copies ?? 0) - 1 })
 
-  // If the RPC fails entirely (DB connection, undefined function)
-  if (error) {
-    console.error('Checkout DB Error:', error)
+    const dueDate = new Date()
+    dueDate.setDate(dueDate.getDate() + 14)
+
+    const record = {
+      _id: `borrowing_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      type: 'borrowing_record',
+      borrower_id: borrowerId,
+      book_id: bookId,
+      status: 'borrowed',
+      borrowed_date: new Date().toISOString(),
+      due_date: dueDate.toISOString(),
+      returned_date: null
+    }
+
+    await db.put(record)
+    
+  } catch (err: unknown) {
+    const asObj = err as { status?: number }
+    if (asObj?.status === 409) return { error: 'Concurrency error: Try again.' }
     return { error: 'Failed to process checkout due to database error' }
-  }
-
-  // If the RPC throws an intentional business logic error (e.g. no copies)
-  if (data?.error) {
-    return { error: data.error }
   }
 
   revalidatePath('/admin/checkout')
@@ -149,76 +170,89 @@ export async function processCheckout(borrowerId: string, bookId: string) {
 }
 
 export async function processReturn(isbn: string) {
-  const supabase = await createClient()
+  const { error, db } = await verifyStaff()
+  if (error || !db) return { error }
 
-  // Verify caller is admin/staff
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized' }
+  try {
+    const booksRes = await db.find({ selector: { type: 'book', isbn } })
+    if (booksRes.docs.length === 0) return { error: 'Book with this ISBN not found in the system.' }
+    const book = booksRes.docs[0] as unknown as PouchDoc
 
-  // Use the atomic stored procedure instead of independent reads/writes
-  const { data, error } = await supabase.rpc('atomic_return', {
-    p_isbn: isbn
-  })
+    let recordsRes = await db.find({
+      selector: {
+        type: 'borrowing_record',
+        book_id: book._id,
+        status: { $in: ['borrowed', 'overdue'] }
+      }
+    })
 
-  // If the RPC fails entirely (DB connection, undefined function)
-  if (error) {
-    console.error('Return DB Error:', error)
-    return { error: 'Failed to process return due to database error' }
-  }
+    if (recordsRes.docs.length === 0) {
+      const pendingRes = await db.find({
+        selector: {
+           type: 'borrowing_record',
+           book_id: book._id,
+           status: 'pending_return'
+        }
+      })
+      if (pendingRes.docs.length === 0) {
+        return { error: 'This book is not currently checked out.' }
+      }
+      recordsRes = pendingRes
+    }
 
-  // If the RPC throws an intentional business logic error (e.g. no active record)
-  if (data?.error) {
-    return { error: data.error }
+    const sortedDocs = (recordsRes.docs as unknown as PouchDoc[]).sort((x, y) =>
+      new Date(String(x.borrowed_date ?? 0)).getTime() - new Date(String(y.borrowed_date ?? 0)).getTime()
+    )
+    const recordToReturn = sortedDocs[0]
+
+    await db.put({ ...recordToReturn, status: 'returned', returned_date: new Date().toISOString() })
+    await db.put({ ...book, available_copies: Number(book.available_copies ?? 0) + 1 })
+
+  } catch (err: unknown) {
+    const asObj = err as { status?: number; message?: string }
+    if (asObj?.status === 409) return { error: 'Concurrency error: Try again.' }
+    return { error: `Failed to process return: ${asObj?.message ?? String(err)}` }
   }
 
   revalidatePath('/admin/checkout')
-  return { success: true, message: data.message || 'Return successful!' }
+  return { success: true, message: 'Return successful!' }
 }
 
-/**
- * Pre-flight compliance check: fetches active holds and unpaid fines
- * for a borrower so the librarian UI can show a warning before committing
- * the checkout.
- */
 export async function getBorrowerStatus(borrowerId: string) {
-  const supabase = await createClient()
+  const { error, db } = await verifyStaff()
+  if (error || !db) return { error: 'Unauthorized' }
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized' }
+  type HoldOrFine = Record<string, unknown> & { _id: string }
+  let holds: HoldOrFine[] = []
+  let fines: HoldOrFine[] = []
+  let totalFines = 0
 
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!profile || !['super_admin', 'librarian', 'circulation_assistant'].includes(profile.role)) {
-    return { error: 'Unauthorized' }
+  try {
+    const holdsRes = await db.find({ selector: { type: 'hold', borrower_id: borrowerId, active: true } })
+    holds = (holdsRes.docs as unknown as HoldOrFine[]).map(h => ({ ...h, id: h._id }))
+
+    const recordsRes = await db.find({ selector: { type: 'borrowing_record', borrower_id: borrowerId } })
+    const recordIds = (recordsRes.docs as unknown as HoldOrFine[]).map(r => r._id)
+    
+    if (recordIds.length > 0) {
+      const finesRes = await db.find({ 
+        selector: { 
+          type: 'fine', 
+          status: 'unpaid', 
+          borrowing_record_id: { $in: recordIds } 
+        } 
+      })
+      fines = (finesRes.docs as unknown as HoldOrFine[]).map(f => ({ ...f, id: f._id }))
+      totalFines = fines.reduce((sum, f) => sum + (Number(f.amount) || 0), 0)
+    }
+  } catch(err: unknown) {
+    console.error('Error fetching borrower status:', err)
   }
 
-  // Fetch active holds
-  const { data: holds } = await supabase
-    .from('holds')
-    .select('id, reason, created_at')
-    .eq('borrower_id', borrowerId)
-    .eq('active', true)
-
-  // Fetch unpaid fines with due date from the borrowing record
-  const { data: fines } = await supabase
-    .from('fines')
-    .select('id, amount, created_at, borrowing_record_id')
-    .eq('status', 'unpaid')
-    .in(
-      'borrowing_record_id',
-      (
-        await supabase
-          .from('borrowing_records')
-          .select('id')
-          .eq('borrower_id', borrowerId)
-      ).data?.map((r) => r.id) ?? []
-    )
-
-  const totalFines = (fines ?? []).reduce((sum, f) => sum + Number(f.amount), 0)
-
   return {
-    holds: holds ?? [],
-    fines: fines ?? [],
+    holds,
+    fines,
     totalFines,
-    isBlocked: (holds && holds.length > 0) || totalFines > 0,
+    isBlocked: holds.length > 0 || totalFines > 0,
   }
 }

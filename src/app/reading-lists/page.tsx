@@ -1,13 +1,13 @@
-import { createClient } from '@/utils/supabase/server'
+import { getSession } from '@/lib/auth/couchdb'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import ReadingListsLoader from './ReadingListsLoader'
 import { ArrowLeft, BookMarked } from 'lucide-react'
 
 export default async function ReadingListsPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) redirect('/login')
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -38,8 +38,8 @@ export default async function ReadingListsPage() {
           </div>
         </div>
 
-        {/* Reading list data sourced from local PowerSync SQLite, scoped to user */}
-        <ReadingListsLoader userId={user.id} />
+        {/* Reading list data sourced from local PouchDB, scoped to user */}
+        <ReadingListsLoader userId={userId} />
       </div>
     </div>
   )

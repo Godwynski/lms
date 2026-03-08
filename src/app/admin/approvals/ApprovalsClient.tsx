@@ -6,7 +6,7 @@ import {
   CheckCircle2, XCircle, Search, Clock, BookOpen, AlertCircle, Loader2 
 } from 'lucide-react'
 import { ConfirmAction } from '@/lib/swal'
-import { useAdminBorrowingMutations } from '@/lib/powersync/hooks/useAdminBorrowingMutations'
+import { useAdminBorrowingMutations } from '@/lib/pouchdb/hooks/useAdminBorrowingMutations'
 
 type RequestData = {
   id: string

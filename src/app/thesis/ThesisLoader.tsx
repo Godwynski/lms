@@ -1,19 +1,22 @@
 'use client'
 
-import { useQuery } from '@powersync/react'
+import { usePouchDbQuery } from '@/lib/pouchdb/hooks/usePouchDbQuery'
 import ThesisClient, { type Thesis } from './ThesisClient'
 import { BookOpenText } from 'lucide-react'
 
 /**
  * Replaces the server-side Supabase fetch on the Thesis page.
- * Reads thesis data from the local PowerSync SQLite database — zero network latency.
- * The useQuery hook is reactive: the UI re-renders automatically when the sync engine
- * updates the local DB with new records from Supabase.
+ * Reads thesis data from the local PouchDB database — zero network latency.
+ * The usePouchDbQuery hook is reactive: the UI re-renders automatically when the sync engine
+ * updates the local DB with new records from CouchDB.
  */
 export default function ThesisLoader() {
-  const { data: rows, isLoading } = useQuery<Thesis>(
-    'SELECT id, title, author, course, publication_year, abstract, pdf_url, created_at FROM theses ORDER BY publication_year DESC'
-  )
+  const { data: rows, isLoading } = usePouchDbQuery<Thesis>({
+    selector: { type: 'thesis' }
+  })
+  
+  // Sort by publication_year descending in memory to avoid needing complex indices initially
+  const sortedRows = [...(rows || [])].sort((a, b) => (b.publication_year || 0) - (a.publication_year || 0))
 
   if (isLoading) {
     return (
@@ -26,5 +29,5 @@ export default function ThesisLoader() {
     )
   }
 
-  return <ThesisClient thesisList={rows || []} />
+  return <ThesisClient thesisList={sortedRows} />
 }

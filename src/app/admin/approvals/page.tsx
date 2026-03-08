@@ -1,18 +1,31 @@
-import { createClient } from '@/utils/supabase/server'
+import { getSession, getAdminDb } from '@/lib/auth/couchdb'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { Bookmark, ArrowLeft } from 'lucide-react'
 import ApprovalsLoader from './ApprovalsLoader'
 
+
 export default async function ApprovalsPage() {
-  const supabase = await createClient()
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) redirect('/login')
 
-  // Auth + role guard remain server-side for security
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  const roles = session?.userCtx?.roles || []
+  let hasAccess = ['super_admin', 'librarian', 'circulation_assistant'].some(r => roles.includes(r))
+  
+  if (!hasAccess) {
+    try {
+      const db = await getAdminDb()
+      const profileDocs = await db.find({ selector: { type: 'profile', user_id: userId } })
+      if (profileDocs.docs.length > 0 && ['super_admin', 'librarian', 'circulation_assistant'].includes(String((profileDocs.docs[0] as unknown as Record<string, unknown>)?.role ?? ''))) {
+        hasAccess = true
+      }
+    } catch {
+      // Non-critical: fall through
+    }
+  }
 
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!profile || !['super_admin', 'librarian', 'circulation_assistant'].includes(profile.role)) {
+  if (!hasAccess) {
     redirect('/')
   }
 
@@ -36,7 +49,7 @@ export default async function ApprovalsPage() {
           </div>
         </div>
 
-        {/* Approvals data sourced from local PowerSync SQLite */}
+        {/* Approvals data sourced from local PouchDB */}
         <ApprovalsLoader />
       </div>
     </div>

@@ -1,26 +1,62 @@
-import { createClient } from '@/utils/supabase/server'
+import { getSession, getAdminDb } from '@/lib/auth/couchdb'
 import { NextResponse } from 'next/server'
+
+
 
 const STAFF_ROLES = ['super_admin', 'librarian', 'circulation_assistant']
 
 export async function GET() {
-  const supabase = await createClient()
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const db = await getAdminDb()
+  const roles = session?.userCtx?.roles || []
+  let hasAccess = STAFF_ROLES.some(r => roles.includes(r))
 
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!profile || !STAFF_ROLES.includes(profile.role)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!hasAccess) {
+    try {
+      const profileDocs = await db.find({ selector: { type: 'profile', user_id: userId } })
+      if (profileDocs.docs.length > 0 && STAFF_ROLES.includes(String((profileDocs.docs[0] as unknown as Record<string, unknown>)?.role ?? ''))) {
+        hasAccess = true
+      }
+    } catch {
+      // Non-critical: fall through
+    }
   }
 
-  const { data: records, error } = await supabase
-    .from('borrowing_records')
-    .select('id, status, borrowed_date, due_date, books(title, isbn), profiles(full_name, email, student_number)')
-    .in('status', ['borrowed', 'pending', 'overdue', 'pending_return'])
-    .order('due_date', { ascending: true })
+  if (!hasAccess) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  type PouchDoc = Record<string, unknown> & { _id: string }
+  type EnrichedRecord = PouchDoc & { books: PouchDoc | null; profiles: PouchDoc | null }
+  let records: EnrichedRecord[] = []
+  try {
+    const res = await db.find({ 
+        selector: { 
+            type: 'borrowing_record', 
+            status: { $in: ['borrowed', 'pending', 'overdue', 'pending_return'] } 
+        } 
+    })
+    const rawRecords = res.docs as unknown as PouchDoc[]
+
+    const [allBooksRes, allProfilesRes] = await Promise.all([
+        db.find({ selector: { type: 'book' } }),
+        db.find({ selector: { type: 'profile' } })
+    ])
+    
+    const booksMap = new Map((allBooksRes.docs as unknown as PouchDoc[]).map(b => [b._id, b]))
+    const profilesMap = new Map((allProfilesRes.docs as unknown as PouchDoc[]).map(p => [String(p.user_id ?? ''), p]))
+
+    records = rawRecords.map(r => ({
+        ...r,
+        id: r._id,
+        books: booksMap.get(String(r.book_id ?? '')) ?? null,
+        profiles: profilesMap.get(String(r.borrower_id ?? '')) ?? null
+    }))
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 
   const headers = ['record_id', 'borrower_name', 'borrower_email', 'student_number', 'book_title', 'isbn', 'status', 'borrowed_date', 'due_date']
 
@@ -33,8 +69,7 @@ export async function GET() {
     return str
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rows = (records ?? []).map((r: any) => [
+  const rows = records.map((r) => [
     r.id,
     r.profiles?.full_name ?? '',
     r.profiles?.email ?? '',

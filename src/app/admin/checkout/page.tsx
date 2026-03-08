@@ -1,23 +1,37 @@
-import { createClient } from '@/utils/supabase/server'
+import { getSession, getAdminDb } from '@/lib/auth/couchdb'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ShieldCheck, ArrowLeft } from 'lucide-react'
 import CheckoutClient from './CheckoutClient'
 
-export default async function CheckoutPage() {
-  const supabase = await createClient()
 
-  // Verify Admin or Staff Role
-  const { data: { user } } = await supabase.auth.getUser()
-  
-  if (!user) {
-    redirect('/login')
+
+export default async function CheckoutPage() {
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) redirect('/login')
+
+  const db = await getAdminDb()
+  const roles = session?.userCtx?.roles || []
+  let hasAccess = ['super_admin', 'librarian', 'circulation_assistant'].some(r => roles.includes(r))
+  let roleDisplay = roles[0] || 'staff'
+
+  if (!hasAccess) {
+    try {
+      const profileDocs = await db.find({ selector: { type: 'profile', user_id: userId } })
+      if (profileDocs.docs.length > 0) {
+        const profile = profileDocs.docs[0] as unknown as Record<string, unknown>
+        if (['super_admin', 'librarian', 'circulation_assistant'].includes(String(profile.role ?? ''))) {
+          hasAccess = true
+          roleDisplay = String(profile.role ?? 'staff')
+        }
+      }
+    } catch {
+      // Non-critical: fall through
+    }
   }
 
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  
-  const ALLOWED_ROLES = ['super_admin', 'librarian', 'circulation_assistant']
-  if (!profile || !ALLOWED_ROLES.includes(profile.role)) {
+  if (!hasAccess) {
     redirect('/')
   }
 
@@ -38,7 +52,7 @@ export default async function CheckoutPage() {
           
           <div className="flex items-center space-x-2 text-slate-600 bg-white/50 backdrop-blur-sm px-4 py-2 rounded-xl border border-slate-200/50 shadow-sm">
             <ShieldCheck className="w-5 h-5 text-emerald-500" />
-            <span className="text-sm font-semibold capitalize">{profile.role} Access</span>
+            <span className="text-sm font-semibold capitalize">{roleDisplay.replace('_', ' ')} Access</span>
           </div>
         </div>
 

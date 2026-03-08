@@ -1,23 +1,52 @@
-import { createClient } from '@/utils/supabase/server'
+import { getSession, getAdminDb } from '@/lib/auth/couchdb'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, BookOpenText } from 'lucide-react'
 import ThesisAdminClient from './ThesisAdminClient'
+import type { Thesis } from '@/app/thesis/ThesisClient'
+
 
 const STAFF_ROLES = ['super_admin', 'librarian', 'circulation_assistant']
 
 export default async function AdminThesisPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) redirect('/login')
 
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!profile || !STAFF_ROLES.includes(profile.role)) redirect('/')
+  const roles = session?.userCtx?.roles || []
+  let hasAccess = STAFF_ROLES.some(r => roles.includes(r))
+  
+  const db = await getAdminDb()
 
-  const { data: thesisList } = await supabase
-    .from('theses')
-    .select('id, title, author, course, publication_year, abstract, pdf_url, created_at')
-    .order('publication_year', { ascending: false })
+  if (!hasAccess) {
+    try {
+      const profileDocs = await db.find({ selector: { type: 'profile', user_id: userId } })
+      if (profileDocs.docs.length > 0 && STAFF_ROLES.includes(String((profileDocs.docs[0] as unknown as Record<string, unknown>)?.role ?? ''))) {
+        hasAccess = true
+      }
+    } catch {
+      // Non-critical: fall through
+    }
+  }
+
+  if (!hasAccess) redirect('/')
+
+  let thesisList: Thesis[] = []
+  try {
+    const res = await db.find({ selector: { type: 'thesis' } })
+    thesisList = (res.docs as unknown as (Record<string, unknown> & { _id: string })[]).map(doc => ({
+      id: doc._id,
+      title: String(doc.title ?? ''),
+      author: String(doc.author ?? ''),
+      course: doc.course != null ? String(doc.course) : null,
+      publication_year: doc.publication_year != null ? Number(doc.publication_year) : null,
+      abstract: doc.abstract != null ? String(doc.abstract) : null,
+      pdf_url: doc.pdf_url != null ? String(doc.pdf_url) : null,
+      created_at: String(doc.created_at ?? new Date().toISOString()),
+    })).sort((a, b) => Number(b.publication_year ?? 0) - Number(a.publication_year ?? 0))
+  } catch {
+    // Non-critical: fall through, thesisList stays empty
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans">

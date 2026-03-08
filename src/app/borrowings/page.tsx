@@ -1,38 +1,62 @@
-import { createClient } from '@/utils/supabase/server'
+import { getSession } from '@/lib/auth/couchdb'
+import PouchDB from 'pouchdb'
+import PouchDBFind from 'pouchdb-find'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { BookOpen, CalendarDays, ArrowLeft, History, CheckCircle2, Clock, AlertTriangle } from 'lucide-react'
 import Image from 'next/image'
+
+PouchDB.plugin(PouchDBFind)
+const COUCHDB_URL = process.env.NEXT_PUBLIC_COUCHDB_URL || 'http://localhost:5984'
+async function getDb() {
+  return new PouchDB(`${COUCHDB_URL}/lms`, { skip_setup: true })
+}
 
 export const metadata = {
   title: 'My Borrowings - Library Management System',
 }
 
 export default async function BorrowingsPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const session = await getSession()
+  const userId = session?.userCtx?.name
 
-  if (!user) {
+  if (!userId) {
     redirect('/login')
   }
 
-  // Fetch all borrowings for the current user
-  const { data: rawBorrowings } = await supabase
-    .from('borrowing_records')
-    .select('id, book_id, due_date, status, borrowed_date, returned_date, books(title, cover_image_url)')
-    .eq('borrower_id', user.id)
-    .order('borrowed_date', { ascending: false })
+  const db = await getDb()
+  const res = await db.find({
+    selector: { type: 'borrowing_record', borrower_id: userId }
+  })
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const borrowings = (rawBorrowings || []).map((b: any) => ({
-    id: b.id,
-    book_id: b.book_id,
-    title: b.books?.title || 'Unknown Book',
-    cover: b.books?.cover_image_url || null,
-    borrowed_date: b.borrowed_date,
-    due_date: b.due_date,
-    returned_date: b.returned_date,
-    status: b.status,
+  const rawDocs = res.docs.sort((a, b) => {
+    const docA = a as unknown as Record<string, unknown>
+    const docB = b as unknown as Record<string, unknown>
+    return new Date(String(docB.borrowed_date || docB.created_at || '1970-01-01')).getTime() - new Date(String(docA.borrowed_date || docA.created_at || '1970-01-01')).getTime()
+  })
+
+  const borrowings = await Promise.all(rawDocs.map(async (doc) => {
+    const b = doc as unknown as Record<string, unknown>
+    let title = 'Unknown Book'
+    let cover = null
+    try {
+      const bookDoc = await db.get(String(b.book_id)) as Record<string, unknown>
+      title = String(bookDoc.title)
+      cover = bookDoc.cover_image_url ? String(bookDoc.cover_image_url) : null
+    } catch {
+      // ignore
+    }
+    
+    return {
+      id: b._id,
+      book_id: b.book_id,
+      title,
+      cover,
+      borrowed_date: b.borrowed_date || b.created_at || new Date().toISOString(),
+      due_date: b.due_date,
+      returned_date: b.returned_date,
+      status: b.status,
+    }
   }))
 
   const activeBorrowings = borrowings.filter(b => b.status === 'borrowed')
@@ -81,13 +105,13 @@ export default async function BorrowingsPage() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {activeBorrowings.map(b => {
-                const due = new Date(b.due_date)
+                const due = new Date(String(b.due_date))
                 const daysLeft = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
                 const isOverdue = daysLeft < 0
                 const isDueSoon = !isOverdue && daysLeft <= 3
 
                 return (
-                  <div key={b.id} className={`bg-white rounded-2xl border shadow-sm overflow-hidden flex flex-col ${
+                  <div key={String(b.id)} className={`bg-white rounded-2xl border shadow-sm overflow-hidden flex flex-col ${
                     isOverdue ? 'border-rose-200' : isDueSoon ? 'border-amber-200' : 'border-slate-100'
                   }`}>
                     <div className="p-4 flex gap-4">
@@ -158,7 +182,7 @@ export default async function BorrowingsPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {pastBorrowings.map(b => (
-                      <tr key={b.id} className="hover:bg-slate-50/50 transition-colors">
+                      <tr key={String(b.id)} className="hover:bg-slate-50/50 transition-colors">
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-3">
                             {b.cover ? (
@@ -172,11 +196,11 @@ export default async function BorrowingsPage() {
                           </div>
                         </td>
                         <td className="px-5 py-4 text-slate-500 tabular-nums hidden sm:table-cell">
-                          {new Date(b.borrowed_date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          {new Date(String(b.borrowed_date)).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
                         </td>
                         <td className="px-5 py-4 text-slate-500 tabular-nums">
                           {b.returned_date 
-                            ? new Date(b.returned_date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+                            ? new Date(String(b.returned_date)).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
                             : '-'}
                         </td>
                         <td className="px-5 py-4 text-right">

@@ -59,7 +59,7 @@ export default function CheckoutClient() {
           if (result.error) {
             setError(result.error)
           } else if (result.user) {
-            await handleBorrowerFound(result.user)
+            await handleBorrowerFound(result.user as unknown as Borrower)
           }
         } else if (step === 2) {
           // Look up book by ISBN
@@ -67,7 +67,7 @@ export default function CheckoutClient() {
           if (result.error) {
              setError(result.error)
           } else {
-             setBook(result.book)
+             setBook(result.book as unknown as BookInfo | null)
              if (result.isNew) {
                console.log("New book registered to the library database")
              }
@@ -83,7 +83,7 @@ export default function CheckoutClient() {
           if (result.error) {
              setError(result.error)
           } else {
-             setBook(result.book)
+             setBook(result.book as unknown as BookInfo | null)
              setStep(2)
           }
         }
@@ -147,7 +147,7 @@ export default function CheckoutClient() {
     setStep(2)
     const status = await getBorrowerStatus(foundBorrower.id)
     if (!('error' in status)) {
-      setBorrowerStatus(status as BorrowerStatus)
+      setBorrowerStatus(status as unknown as BorrowerStatus)
     }
   }
 
@@ -310,7 +310,7 @@ export default function CheckoutClient() {
                                   const res = await lookupUserByStudentNumber(studentNumberInput)
                                   setIsStudentLookupPending(false)
                                   if (res.error) setError(res.error)
-                                  else if (res.user) await handleBorrowerFound(res.user)
+                                  else if (res.user) await handleBorrowerFound(res.user as unknown as Borrower)
                                 }
                               }}
                               placeholder="Student number (e.g. 2024-0001-MNL)"
@@ -325,7 +325,7 @@ export default function CheckoutClient() {
                               const res = await lookupUserByStudentNumber(studentNumberInput)
                               setIsStudentLookupPending(false)
                               if (res.error) setError(res.error)
-                              else if (res.user) await handleBorrowerFound(res.user)
+                              else if (res.user) await handleBorrowerFound(res.user as unknown as Borrower)
                             }}
                             className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-sm font-semibold rounded-xl transition-colors shrink-0"
                           >

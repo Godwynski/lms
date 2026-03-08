@@ -1,76 +1,126 @@
 'use server'
 
-import { createClient } from '@/utils/supabase/server'
+import { getSession } from '@/lib/auth/couchdb'
 import { revalidatePath } from 'next/cache'
+import PouchDB from 'pouchdb'
+import PouchDBFind from 'pouchdb-find'
+
+PouchDB.plugin(PouchDBFind)
+
+const COUCHDB_URL = process.env.NEXT_PUBLIC_COUCHDB_URL || 'http://localhost:5984'
+
+async function getDb() {
+  return new PouchDB(`${COUCHDB_URL}/lms`, { skip_setup: true })
+}
 
 export async function addToReadingList(bookId: string, listId: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
+  const session = await getSession()
+  if (!session?.userCtx?.name) return { error: 'Not authenticated' }
 
-  const { error } = await supabase
-    .from('reading_list_books')
-    .insert({ list_id: listId, book_id: bookId })
+  try {
+    const db = await getDb()
+    
+    // Check if it already exists
+    const existing = await db.find({
+      selector: { type: 'reading_list_book', list_id: listId, book_id: bookId }
+    })
 
-  if (error) {
-    if (error.code === '23505') return { error: 'Book is already in this list' }
-    return { error: error.message }
+    if (existing.docs.length > 0) {
+      return { error: 'Book is already in this list' }
+    }
+
+    await db.post({
+      type: 'reading_list_book',
+      list_id: listId,
+      book_id: bookId,
+      created_at: new Date().toISOString()
+    })
+
+    revalidatePath('/catalog')
+    revalidatePath('/reading-lists')
+    return { success: true }
+  } catch (error: unknown) {
+    return { error: error instanceof Error ? error.message : 'Unknown error' }
   }
-
-  revalidatePath('/catalog')
-  revalidatePath('/reading-lists')
-  return { success: true }
 }
 
 export async function removeFromReadingList(bookId: string, listId: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
+  const session = await getSession()
+  if (!session?.userCtx?.name) return { error: 'Not authenticated' }
 
-  const { error } = await supabase
-    .from('reading_list_books')
-    .delete()
-    .eq('list_id', listId)
-    .eq('book_id', bookId)
+  try {
+    const db = await getDb()
+    
+    const existing = await db.find({
+      selector: { type: 'reading_list_book', list_id: listId, book_id: bookId }
+    })
 
-  if (error) return { error: error.message }
+    for (const doc of existing.docs) {
+      await db.remove(doc._id, doc._rev)
+    }
 
-  revalidatePath('/catalog')
-  revalidatePath('/reading-lists')
-  return { success: true }
+    revalidatePath('/catalog')
+    revalidatePath('/reading-lists')
+    return { success: true }
+  } catch (error: unknown) {
+    return { error: error instanceof Error ? error.message : 'Unknown error' }
+  }
 }
 
 export async function createReadingList(name: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) return { error: 'Not authenticated' }
 
-  const { data, error } = await supabase
-    .from('reading_lists')
-    .insert({ user_id: user.id, name: name.trim() })
-    .select()
-    .single()
+  try {
+    const db = await getDb()
+    
+    const res = await db.post({
+      type: 'reading_list',
+      user_id: userId,
+      name: name.trim(),
+      created_at: new Date().toISOString()
+    })
 
-  if (error) return { error: error.message }
+    const list = await db.get(res.id)
 
-  revalidatePath('/catalog')
-  revalidatePath('/reading-lists')
-  return { success: true, list: data }
+    revalidatePath('/catalog')
+    revalidatePath('/reading-lists')
+    return { success: true, list }
+  } catch (error: unknown) {
+    return { error: error instanceof Error ? error.message : 'Unknown error' }
+  }
 }
 
 export async function deleteReadingList(listId: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) return { error: 'Not authenticated' }
 
-  const { error } = await supabase
-    .from('reading_lists')
-    .delete()
-    .eq('id', listId)
-    .eq('user_id', user.id)
+  try {
+    const db = await getDb()
+    
+    // Delete the list itself
+    const list = await db.get(listId)
+    // Basic authorization check
+    if ((list as unknown as Record<string, unknown>).user_id !== userId) {
+      return { error: 'Not authorized to delete this list' }
+    }
+    
+    await db.remove(list._id, list._rev)
 
-  if (error) return { error: error.message }
+    // Delete all books in the list
+    const booksInList = await db.find({
+      selector: { type: 'reading_list_book', list_id: listId }
+    })
 
-  revalidatePath('/reading-lists')
-  return { success: true }
+    for (const doc of booksInList.docs) {
+      await db.remove(doc._id, doc._rev)
+    }
+
+    revalidatePath('/reading-lists')
+    return { success: true }
+  } catch (error: unknown) {
+    return { error: error instanceof Error ? error.message : 'Unknown error' }
+  }
 }

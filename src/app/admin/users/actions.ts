@@ -1,36 +1,41 @@
 'use server'
 
-import { createClient } from '@/utils/supabase/server'
+import { getSession, getAdminDb, getAdminUsersDb } from '@/lib/auth/couchdb'
 import { revalidatePath } from 'next/cache'
 import { extractStudentNumberFromEmail } from '@/lib/email-utils'
 
-export async function adminCreateUser(formData: FormData) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+const STAFF_ROLES = ['super_admin', 'librarian', 'circulation_assistant']
+type PouchDoc = Record<string, unknown> & { _id: string; _rev: string }
 
-  if (!supabaseUrl || !serviceRoleKey) {
-    return { error: 'Server configuration error: Missing Service Role Key' }
-  }
+async function verifySuperAdminOrLibrarian() {
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) return { error: 'Unauthorized' }
 
-  // We must bypass the standard auth client so the active Admin doesn't get logged out.
-  // We use the @supabase/supabase-js client with the SERVICE_ROLE_KEY specifically for this.
-  const { createClient: createAdminClient } = await import('@supabase/supabase-js')
-  const supabaseAdmin = createAdminClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
+  const roles = session?.userCtx?.roles || []
+  let hasAccess = ['super_admin', 'librarian'].some(r => roles.includes(r))
+  
+  const db = await getAdminDb()
+
+  if (!hasAccess) {
+    try {
+      const profileDocs = await db.find({ selector: { type: 'profile', user_id: userId } })
+      const firstDoc = profileDocs.docs[0] as unknown as PouchDoc
+      if (profileDocs.docs.length > 0 && ['super_admin', 'librarian'].includes(String(firstDoc?.role ?? ''))) {
+        hasAccess = true
+      }
+    } catch {
+      // Non-critical: fall through
     }
-  })
-
-  // 1. Verify current user is actually an admin
-  const standardSupabase = await createClient()
-  const { data: { user } } = await standardSupabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized' }
-
-  const { data: profile } = await standardSupabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!profile || !['super_admin', 'librarian'].includes(profile.role)) {
-    return { error: 'Only administrators can create users directly.' }
   }
+  
+  if (!hasAccess) return { error: 'Unauthorized. Only administrators can perform this action.' }
+  return { error: null, db, userId }
+}
+
+export async function adminCreateUser(formData: FormData) {
+  const { error, db } = await verifySuperAdminOrLibrarian()
+  if (error || !db) return { error }
 
   const email = formData.get('email') as string
   const password = formData.get('password') as string
@@ -41,150 +46,180 @@ export async function adminCreateUser(formData: FormData) {
     return { error: 'All fields are required' }
   }
 
-  // 2. Create user via Admin Auth API
-  const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-    email: email,
-    password: password,
-    email_confirm: true, // Auto-confirm the email
-    user_metadata: {
-      role: role,
-      full_name: fullName
-    }
-  })
+  const usersDb = await getAdminUsersDb()
+  try {
+    const existingUser = await usersDb.get(`org.couchdb.user:${email}`).catch(() => null)
+    if (existingUser) return { error: 'A user with this email already exists.' }
 
-  if (createError) {
-    console.error('Admin user creation failed:', createError)
-    if (createError.message.includes('already registered')) {
-        return { error: 'A user with this email already exists.' }
-    }
-    return { error: createError.message }
+    await usersDb.put({
+      _id: `org.couchdb.user:${email}`,
+      name: email,
+      roles: [role],
+      type: 'user',
+      password: password
+    })
+  } catch (err: unknown) {
+    console.error('Admin user creation failed:', err)
+    const msg = err instanceof Error ? err.message : String(err)
+    return { error: msg }
   }
 
-  // 3. The trigger "on_auth_user_created" inserts the profile automatically.
-  // If this is a borrower with an STI email, auto-set the student number.
-  if (newUser?.user && role === 'borrower') {
-    const autoStudentNumber = extractStudentNumberFromEmail(email)
-    if (autoStudentNumber) {
-      // Small delay to allow the DB trigger to create the profile first
-      await new Promise(resolve => setTimeout(resolve, 800))
-      await supabaseAdmin
-        .from('profiles')
-        .update({ student_number: autoStudentNumber })
-        .eq('id', newUser.user.id)
-    }
+  const autoStudentNumber = role === 'borrower' ? extractStudentNumberFromEmail(email) : null
+  
+  try {
+    await db.put({
+      _id: `profile_${Date.now()}_${email}`,
+      type: 'profile',
+      user_id: email,
+      email: email,
+      full_name: fullName,
+      role: role,
+      student_number: autoStudentNumber || null,
+      created_at: new Date().toISOString()
+    })
+  } catch (err: unknown) {
+    console.error('Profile creation failed:', err)
   }
 
   revalidatePath('/admin/users')
-  const autoNum = role === 'borrower' ? extractStudentNumberFromEmail(email) : null
-  const msg = autoNum
-    ? `Account created for ${fullName}. Student number auto-set to ${autoNum}.`
+  const msg = autoStudentNumber
+    ? `Account created for ${fullName}. Student number auto-set to ${autoStudentNumber}.`
     : `Successfully created ${role} account for ${fullName}`
   return { success: true, message: msg }
 }
 
-
 export async function adminUpdateUserRole(targetUserId: string, newRole: string) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const { error, db, userId } = await verifySuperAdminOrLibrarian()
+  if (error || !db) return { error }
 
-  if (!supabaseUrl || !serviceRoleKey) return { error: 'Missing Service Role Key' }
-
-  // 1. Verify caller is an admin
-  const standardSupabase = await createClient()
-  const { data: { user } } = await standardSupabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized' }
-
-  const { data: profile } = await standardSupabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!profile || !['super_admin', 'librarian'].includes(profile.role)) {
-    return { error: 'Unauthorized to modify user roles.' }
+  if (userId === targetUserId) {
+    return { error: 'You cannot change your own role from this interface.' }
   }
 
-  // Prevent users from demoting themselves accidentally
-  if (user.id === targetUserId) {
-      return { error: 'You cannot change your own role from this interface.' }
+  const usersDb = await getAdminUsersDb()
+  try {
+    const userDoc = await usersDb.get(`org.couchdb.user:${targetUserId}`) as unknown as PouchDoc
+    await usersDb.put({ ...userDoc, roles: [newRole] })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { error: `Auth update failed: ${msg}` }
   }
 
-  const { createClient: createAdminClient } = await import('@supabase/supabase-js')
-  const supabaseAdmin = createAdminClient(supabaseUrl, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false }
-  })
-
-  // 2. Update the Auth metadata
-  const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(targetUserId, {
-    user_metadata: { role: newRole }
-  })
-
-  if (authError) return { error: `Auth update failed: ${authError.message}` }
-
-  // 3. Update the public profiles table
-  const { error: dbError } = await supabaseAdmin
-    .from('profiles')
-    .update({ role: newRole })
-    .eq('id', targetUserId)
-
-  if (dbError) return { error: `Database update failed: ${dbError.message}` }
+  try {
+    const profiles = await db.find({ selector: { type: 'profile', user_id: targetUserId } })
+    if (profiles.docs.length > 0) {
+      const profileDoc = profiles.docs[0] as unknown as PouchDoc
+      await db.put({ ...profileDoc, role: newRole, updated_at: new Date().toISOString() })
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { error: `Database update failed: ${msg}` }
+  }
 
   revalidatePath('/admin/users')
   return { success: true, message: `Role updated to ${newRole}` }
 }
 
 export async function adminDeleteUser(targetUserId: string) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const { error, db, userId } = await verifySuperAdminOrLibrarian()
+  if (error || !db) return { error }
 
-  if (!supabaseUrl || !serviceRoleKey) return { error: 'Missing Service Role Key' }
-
-  // 1. Verify caller is an admin
-  const standardSupabase = await createClient()
-  const { data: { user } } = await standardSupabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized' }
-
-  const { data: profile } = await standardSupabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!profile || !['super_admin', 'librarian'].includes(profile.role)) {
-    return { error: 'Unauthorized to delete users.' }
-  }
-
-  if (user.id === targetUserId) {
+  if (userId === targetUserId) {
     return { error: 'You cannot delete your own account while logged in.' }
   }
 
-  const { createClient: createAdminClient } = await import('@supabase/supabase-js')
-  const supabaseAdmin = createAdminClient(supabaseUrl, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false }
-  })
+  const usersDb = await getAdminUsersDb()
+  try {
+    const userDoc = await usersDb.get(`org.couchdb.user:${targetUserId}`) as unknown as PouchDoc
+    await usersDb.remove(userDoc._id, userDoc._rev)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { error: `Failed to delete auth user: ${msg}` }
+  }
 
-  // 2. Delete the user from Auth. (The public profile will usually cascade delete based on foreign keys)
-  const { error } = await supabaseAdmin.auth.admin.deleteUser(targetUserId)
-
-  if (error) return { error: error.message }
+  try {
+    const profiles = await db.find({ selector: { type: 'profile', user_id: targetUserId } })
+    if (profiles.docs.length > 0) {
+      for (const p of profiles.docs) {
+        const doc = p as unknown as PouchDoc
+        await db.remove(doc._id, doc._rev)
+      }
+    }
+  } catch {
+    // Non-critical: profile removal failure, auth user already deleted
+  }
 
   revalidatePath('/admin/users')
   return { success: true, message: 'User permanently deleted.' }
 }
 
 export async function adminUpdateStudentNumber(targetUserId: string, studentNumber: string) {
-  const standardSupabase = await createClient()
-  const { data: { user } } = await standardSupabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized' }
-
-  const { data: profile } = await standardSupabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!profile || !['super_admin', 'librarian'].includes(profile.role)) {
-    return { error: 'Only administrators can set student numbers.' }
-  }
+  const { error, db } = await verifySuperAdminOrLibrarian()
+  if (error || !db) return { error }
 
   const clean = studentNumber.trim()
   if (!clean) return { error: 'Student number cannot be empty.' }
 
-  const { error: updateError } = await standardSupabase
-    .from('profiles')
-    .update({ student_number: clean })
-    .eq('id', targetUserId)
+  try {
+    const existing = await db.find({ selector: { type: 'profile', student_number: clean } })
+    const firstDoc = existing.docs[0] as unknown as PouchDoc
+    if (existing.docs.length > 0 && firstDoc.user_id !== targetUserId) {
+      return { error: 'That student number is already assigned to another account.' }
+    }
 
-  if (updateError) {
-    if (updateError.code === '23505') return { error: 'That student number is already assigned to another account.' }
-    return { error: updateError.message }
+    const profiles = await db.find({ selector: { type: 'profile', user_id: targetUserId } })
+    if (profiles.docs.length > 0) {
+      const profileDoc = profiles.docs[0] as unknown as PouchDoc
+      await db.put({ ...profileDoc, student_number: clean, updated_at: new Date().toISOString() })
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { error: msg }
   }
 
   revalidatePath('/admin/users')
   return { success: true, message: `Student number set to ${clean}` }
+}
+
+export async function getAllUsers() {
+  const { error, db } = await verifySuperAdminOrLibrarian()
+  if (error || !db) return { error, users: [] }
+
+  try {
+    const res = await db.find({ selector: { type: 'profile' }, limit: 500 })
+    const users = (res.docs as unknown as PouchDoc[]).map(u => ({
+      ...u,
+      id: u._id,
+    }))
+    return { users, error: null }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { error: msg, users: [] }
+  }
+}
+
+export async function verifyStaffRole() {
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) return { error: 'Unauthorized' }
+
+  const roles = session?.userCtx?.roles || []
+  let hasAccess = STAFF_ROLES.some(r => roles.includes(r))
+  
+  const db = await getAdminDb()
+
+  if (!hasAccess) {
+    try {
+      const profileDocs = await db.find({ selector: { type: 'profile', user_id: userId } })
+      const firstDoc = profileDocs.docs[0] as unknown as PouchDoc
+      if (profileDocs.docs.length > 0 && STAFF_ROLES.includes(String(firstDoc?.role ?? ''))) {
+        hasAccess = true
+      }
+    } catch {
+      // Non-critical: fall through
+    }
+  }
+
+  if (!hasAccess) return { error: 'Unauthorized role' }
+  return { db, userId }
 }

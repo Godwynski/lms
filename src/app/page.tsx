@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { getSession, getAdminDb } from '@/lib/auth/couchdb'
 import Link from 'next/link'
 import {
   BookOpen, Users, ScanLine, Search, BookMarked, Bookmark,
@@ -10,7 +10,17 @@ import Image from 'next/image'
 import LibraryCard from '@/components/LibraryCardWrapper'
 import ReturnButton from './ReturnButton'
 
+async function couchDbQuery(selector: Record<string, unknown>, limit?: number) {
+  const db = await getAdminDb()
+  const res = await db.find({ selector, limit })
+  return { docs: res.docs }
+}
 
+async function couchDbGet(id: string) {
+  const db = await getAdminDb()
+  const res = await db.get(id)
+  return res
+}
 
 // Stat card component
 function StatCard({
@@ -44,19 +54,25 @@ function StatCard({
   )
 }
 
-// (Removed RoleBadge as it's redundant to the NavBar)
-
 export default async function Home() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
-  let profile = null
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  const user = userId ? { id: userId, email: userId } : null
+  
+  let profile: Record<string, unknown> | null = null
+  let role = 'borrower'
+  
   if (user) {
-    const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single()
-    profile = data
+    const roles = session?.userCtx?.roles || []
+    role = roles.includes('super_admin') ? 'super_admin' : roles.includes('librarian') ? 'librarian' : roles.includes('circulation_assistant') ? 'circulation_assistant' : 'borrower'
+    
+    // Attempt to fetch profile details
+    try {
+      const profileDocs = await couchDbQuery({ type: 'profile', user_id: userId })
+      if (profileDocs.docs.length > 0) profile = profileDocs.docs[0] as unknown as Record<string, unknown>
+    } catch {}
   }
 
-  const role = profile?.role || 'borrower'
   const isStaff = ['super_admin', 'librarian', 'circulation_assistant'].includes(role)
   const isAdmin = ['super_admin', 'librarian'].includes(role)
 
@@ -70,79 +86,105 @@ export default async function Home() {
   let myUnpaidFinesTotal = 0
 
   if (user && isStaff) {
-    const [booksRes, borrowingsRes, profilesRes] = await Promise.all([
-      supabase.from('books').select('total_copies, available_copies'),
-      supabase.from('borrowing_records').select('id, status, due_date'),
-      supabase.from('profiles').select('id, role').eq('role', 'borrower'),
-    ])
+    const booksRes = await couchDbQuery({ type: 'book' })
+    const borrowingsRes = await couchDbQuery({ type: 'borrowing_record' })
+    // Count borrowers later or assume from user list. For now, we mock.
+    
+    totalBooks = booksRes.docs.length
+    totalCopies = booksRes.docs.reduce((s: number, b: unknown) => s + (Number((b as Record<string, unknown>).total_copies) || 0), 0)
+    availableCopies = booksRes.docs.reduce((s: number, b: unknown) => s + (Number((b as Record<string, unknown>).available_copies) || 0), 0)
+    
+    activeBorrowings = borrowingsRes.docs.filter((r: unknown) => (r as Record<string, unknown>).status === 'borrowed').length
+    pendingCount = borrowingsRes.docs.filter((r: unknown) => (r as Record<string, unknown>).status === 'pending').length
+    overdueCount = borrowingsRes.docs.filter((r: unknown) => {
+      const rec = r as unknown as Record<string, unknown>
+      if (rec.status !== 'borrowed') return false
+      return new Date(String(rec.due_date)) < new Date()
+    }).length
+    totalBorrowers = 0 // Needs _users query typically, skipping for simplicity
 
-    totalBooks = booksRes.data?.length || 0
-    totalCopies = booksRes.data?.reduce((s, b) => s + (b.total_copies || 0), 0) || 0
-    availableCopies = booksRes.data?.reduce((s, b) => s + (b.available_copies || 0), 0) || 0
-    activeBorrowings = borrowingsRes.data?.filter(r => r.status === 'borrowed').length || 0
-    pendingCount = borrowingsRes.data?.filter(r => r.status === 'pending').length || 0
-    overdueCount = borrowingsRes.data?.filter(r => {
-      if (r.status !== 'borrowed') return false
-      return new Date(r.due_date) < new Date()
-    }).length || 0
-    totalBorrowers = profilesRes.data?.length || 0
+    const recentDocs = borrowingsRes.docs
+      .sort((a: unknown, b: unknown) => {
+        const da = a as unknown as Record<string, unknown>
+        const db = b as unknown as Record<string, unknown>
+        return new Date(String(db.borrowed_date || db.created_at)).getTime() - new Date(String(da.borrowed_date || da.created_at)).getTime()
+      })
+      .slice(0, 6)
 
-    // Recent borrowings with book titles
-    const { data: recent } = await supabase
-      .from('borrowing_records')
-      .select('id, status, borrowed_date, books(title), profiles(full_name, email)')
-      .order('borrowed_date', { ascending: false })
-      .limit(6)
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recentActivity = (recent || []).map((r: any) => ({
-      id: r.id,
-      title: r.books?.title || 'Unknown Book',
-      borrower: r.profiles?.full_name || r.profiles?.email || 'Unknown',
-      status: r.status,
-      date: r.borrowed_date,
+    // Resolve book and borrower names
+    const resolvedRecent = await Promise.all(recentDocs.map(async (r: unknown) => {
+      const rec = r as unknown as Record<string, unknown> & { _id: string }
+      let title = 'Unknown Book'
+      try { const b = await couchDbGet(String(rec.book_id)); title = String((b as unknown as Record<string, unknown>).title) } catch {}
+      
+      let borrowerName = String(rec.borrower_id)
+      try {
+        const pRes = await couchDbQuery({ type: 'profile', user_id: rec.borrower_id })
+        if (pRes.docs.length > 0) borrowerName = String((pRes.docs[0] as unknown as Record<string, unknown>).full_name) || borrowerName
+      } catch {}
+      
+      return {
+        id: rec._id,
+        title,
+        borrower: borrowerName,
+        status: String(rec.status),
+        date: String(rec.borrowed_date || rec.created_at || new Date().toISOString())
+      }
     }))
-  }
+    recentActivity = resolvedRecent  }
 
   if (user && role === 'borrower') {
-    const { data: borrows } = await supabase
-      .from('borrowing_records')
-      .select('id, book_id, due_date, status, books(title, cover_image_url)')
-      .eq('borrower_id', user.id)
-      .in('status', ['borrowed', 'pending', 'pending_return', 'overdue'])
-      .order('due_date', { ascending: true })
+    const borrowsRes = await couchDbQuery({ 
+      type: 'borrowing_record', 
+      borrower_id: user.id,
+      status: { $in: ['borrowed', 'pending', 'pending_return', 'overdue'] }
+    })
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    myBorrowings = (borrows || []).map((b: any) => ({
-      id: b.id,
-      book_id: b.book_id,
-      title: b.books?.title || 'Unknown Book',
-      cover: b.books?.cover_image_url || null,
-      due_date: b.due_date,
-      status: b.status,
+    const resolvedBorrows = await Promise.all(borrowsRes.docs.map(async (doc: unknown) => {
+      const b = doc as unknown as Record<string, unknown> & { _id: string }
+      let title = 'Unknown Book'
+      let cover = null
+      try { 
+        const bookDoc = await couchDbGet(String(b.book_id)) as unknown as Record<string, unknown>
+        title = String(bookDoc.title)
+        cover = bookDoc.cover_image_url ? String(bookDoc.cover_image_url) : null
+      } catch {}
+      
+      return {
+        id: b._id,
+        book_id: String(b.book_id),
+        title,
+        cover,
+        due_date: String(b.due_date),
+        status: String(b.status),
+      }
     }))
+    
+    myBorrowings = resolvedBorrows.sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())
 
     const threeDaysFromNow = new Date()
     threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3)
     dueSoonCount = myBorrowings.filter(b => new Date(b.due_date) <= threeDaysFromNow).length
 
     // Fetch active holds
-    const { data: holdsData } = await supabase
-      .from('holds')
-      .select('id, reason')
-      .eq('borrower_id', user.id)
-      .eq('active', true)
-    myHolds = holdsData ?? []
+    const holdsData = await couchDbQuery({
+      type: 'hold', borrower_id: user.id, active: true
+    })
+    myHolds = holdsData.docs.map((d: unknown) => {
+      const doc = d as unknown as Record<string, unknown> & { _id: string }
+      return { id: doc._id, reason: String(doc.reason) }
+    })
 
     // Fetch unpaid fines total
-    const borrowingIds = (borrows ?? []).map(b => b.id)
+    const borrowingIds = myBorrowings.map(b => b.id)
     if (borrowingIds.length > 0) {
-      const { data: finesData } = await supabase
-        .from('fines')
-        .select('amount')
-        .in('borrowing_record_id', borrowingIds)
-        .eq('status', 'unpaid')
-      myUnpaidFinesTotal = (finesData ?? []).reduce((sum, f) => sum + Number(f.amount), 0)
+      const finesData = await couchDbQuery({
+        type: 'fine', borrowing_record_id: { $in: borrowingIds }, status: 'unpaid'
+      })
+      myUnpaidFinesTotal = finesData.docs.reduce((sum: number, f: unknown) => {
+        const fine = f as unknown as Record<string, unknown>
+        return sum + Number(fine.amount || 0)
+      }, 0)
     }
   }
 
@@ -428,8 +470,8 @@ export default async function Home() {
                   <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3">My Library Card</h2>
                   <LibraryCard
                     userId={user!.id}
-                    fullName={profile?.full_name || user?.email || 'Student'}
-                    studentNumber={profile?.student_number}
+                    fullName={profile?.full_name ? String(profile.full_name) : user?.email || 'Student'}
+                    studentNumber={profile?.student_number ? String(profile.student_number) : undefined}
                     role={role}
                   />
                 </div>

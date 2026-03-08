@@ -7,7 +7,7 @@ import {
   BookOpen, Plus, Trash2, X, Check, Loader2, BookMarked
 } from 'lucide-react'
 import { ConfirmDelete, ConfirmAction } from '@/lib/swal'
-import { useReadingListMutations } from '@/lib/powersync/hooks/useReadingListMutations'
+import { useReadingListMutations } from '@/lib/pouchdb/hooks/useReadingListMutations'
 
 export type Book = {
   id: string

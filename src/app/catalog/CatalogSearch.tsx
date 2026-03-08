@@ -12,7 +12,7 @@ import BookReviews from './BookReviews'
 import { toast } from 'sonner'
 
 type ReadingList = { id: string; name: string }
-type BookType = {
+export type BookType = {
   id: string
   title: string
   author?: string

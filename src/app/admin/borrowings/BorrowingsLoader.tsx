@@ -1,13 +1,15 @@
 'use client'
 
-import { useQuery } from '@powersync/react'
+import { useState, useEffect } from 'react'
+import { usePouchDb } from '@/lib/pouchdb/PouchDBProvider'
 import BorrowingsClient from './BorrowingsClient'
 import type { BorrowingRecord } from './page'
 import { BookMarked } from 'lucide-react'
 
 /**
- * Replaces the server-side Supabase fetch on the Borrowings page.
- * Reads all active loans from the local PowerSync SQLite database with a flat JOIN.
+ * Replaces the server-side SQL join on the Borrowings page.
+ * Reads all active loans from the local PouchDB database and manually resolves
+ * related documents (books, profiles) in memory since NoSQL has no JOINs.
  */
 type RawRecord = {
   id: string
@@ -26,29 +28,78 @@ type RawRecord = {
   borrower_student_number: string | null
 }
 
+type PouchDoc = Record<string, unknown> & { _id: string }
+
 export default function BorrowingsLoader() {
-  const { data: rows, isLoading } = useQuery<RawRecord>(`
-    SELECT
-      br.id,
-      br.status,
-      br.borrowed_date,
-      br.due_date,
-      br.returned_date,
-      br.book_id,
-      br.borrower_id,
-      b.title           AS book_title,
-      b.author          AS book_author,
-      b.isbn            AS book_isbn,
-      b.cover_image_url AS book_cover,
-      p.full_name       AS borrower_name,
-      p.email           AS borrower_email,
-      p.student_number  AS borrower_student_number
-    FROM borrowing_records br
-    LEFT JOIN books b ON b.id = br.book_id
-    LEFT JOIN profiles p ON p.id = br.borrower_id
-    WHERE br.status IN ('pending', 'borrowed', 'overdue', 'pending_return')
-    ORDER BY br.due_date ASC
-  `)
+  const db = usePouchDb()
+  const [rows, setRows] = useState<RawRecord[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    let active = true
+
+    const fetchData = async () => {
+      try {
+        const [recordsRes, booksRes, profilesRes] = await Promise.all([
+          db.find({ 
+            selector: { 
+              type: 'borrowing_record', 
+              status: { $in: ['pending', 'borrowed', 'overdue', 'pending_return'] } 
+            } 
+          }),
+          db.find({ selector: { type: 'book' } }),
+          db.find({ selector: { type: 'profile' } })
+        ])
+
+        const bMap = new Map<string, PouchDoc>(
+          (booksRes.docs as unknown as PouchDoc[]).map((b) => [b._id, b])
+        )
+        const pMap = new Map<string, PouchDoc>(
+          (profilesRes.docs as unknown as PouchDoc[]).map((p) => [p._id, p])
+        )
+
+        const joined: RawRecord[] = (recordsRes.docs as unknown as PouchDoc[]).map((r) => {
+          const b = bMap.get(String(r.book_id)) ?? {}
+          const p = pMap.get(String(r.borrower_id)) ?? {}
+          return {
+            id: r._id,
+            status: String(r.status ?? ''),
+            borrowed_date: String(r.borrowed_date ?? ''),
+            due_date: String(r.due_date ?? ''),
+            returned_date: r.returned_date != null ? String(r.returned_date) : null,
+            book_id: String(r.book_id ?? ''),
+            borrower_id: String(r.borrower_id ?? ''),
+            book_title: (b as PouchDoc).title != null ? String((b as PouchDoc).title) : null,
+            book_author: (b as PouchDoc).author != null ? String((b as PouchDoc).author) : null,
+            book_isbn: (b as PouchDoc).isbn != null ? String((b as PouchDoc).isbn) : null,
+            book_cover: (b as PouchDoc).cover_image_url != null ? String((b as PouchDoc).cover_image_url) : null,
+            borrower_name: (p as PouchDoc).full_name != null ? String((p as PouchDoc).full_name) : null,
+            borrower_email: (p as PouchDoc).email != null ? String((p as PouchDoc).email) : null,
+            borrower_student_number: (p as PouchDoc).student_number != null ? String((p as PouchDoc).student_number) : null,
+          }
+        })
+
+        // Sort by due_date ascending
+        joined.sort((x, y) => (x.due_date || '').localeCompare(y.due_date || ''))
+
+        if (active) {
+          setRows(joined)
+          setIsLoading(false)
+        }
+      } catch (err) {
+        console.error('Borrowings Loader Error:', err)
+        if (active) setIsLoading(false)
+      }
+    }
+
+    fetchData()
+    const changes = db.changes({ since: 'now', live: true }).on('change', fetchData)
+
+    return () => {
+      active = false
+      changes.cancel()
+    }
+  }, [db])
 
   if (isLoading) {
     return (

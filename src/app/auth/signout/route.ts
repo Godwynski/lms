@@ -1,17 +1,10 @@
-import { createClient } from '@/utils/supabase/server'
+import { cookies } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { NextResponse } from 'next/server'
 
 export async function POST(request: Request) {
-  const supabase = await createClient()
-
-  const { error } = await supabase.auth.signOut()
-
-  if (error) {
-    return NextResponse.redirect(new URL('/?error=Could not sign out', request.url), {
-      status: 302,
-    })
-  }
+  const cookieStore = await cookies()
+  cookieStore.delete('AuthSession')
 
   revalidatePath('/', 'layout')
   return NextResponse.redirect(new URL('/', request.url), {

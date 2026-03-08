@@ -1,7 +1,9 @@
 'use server'
 
-import { createClient } from '@/utils/supabase/server'
+import { getSession, getAdminDb } from '@/lib/auth/couchdb'
 import { revalidatePath } from 'next/cache'
+
+
 
 const STAFF_ROLES = ['super_admin', 'librarian', 'circulation_assistant']
 
@@ -22,13 +24,27 @@ export type ImportBookRow = {
 }
 
 export async function importBooks(rows: ImportBookRow[]): Promise<{ imported: number; error?: string }> {
-  const supabase = await createClient()
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) return { imported: 0, error: 'Unauthorized' }
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { imported: 0, error: 'Unauthorized' }
+  const db = await getAdminDb()
+  const roles = session?.userCtx?.roles || []
+  let hasAccess = STAFF_ROLES.some(r => roles.includes(r))
 
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!profile || !STAFF_ROLES.includes(profile.role)) return { imported: 0, error: 'Unauthorized' }
+  if (!hasAccess) {
+    try {
+      const profileDocs = await db.find({ selector: { type: 'profile', user_id: userId } })
+      const firstDoc = profileDocs.docs[0] as unknown as Record<string, unknown>
+      if (profileDocs.docs.length > 0 && STAFF_ROLES.includes(String(firstDoc?.role ?? ''))) {
+        hasAccess = true
+      }
+    } catch {
+      // Non-critical: fall through, access remains false
+    }
+  }
+
+  if (!hasAccess) return { imported: 0, error: 'Unauthorized' }
 
   if (!rows.length) return { imported: 0, error: 'No rows to import.' }
 
@@ -36,6 +52,7 @@ export async function importBooks(rows: ImportBookRow[]): Promise<{ imported: nu
   const clean = rows
     .filter(r => r.title?.trim())
     .map(r => ({
+      type: 'book',
       title: r.title.trim(),
       author: r.author?.trim() || null,
       isbn: r.isbn?.trim() || null,
@@ -50,30 +67,32 @@ export async function importBooks(rows: ImportBookRow[]): Promise<{ imported: nu
       language: r.language?.trim() || null,
       page_count: r.page_count ? Number(r.page_count) : null,
       description: r.description?.trim() || null,
+      created_at: new Date().toISOString()
     }))
 
   if (!clean.length) return { imported: 0, error: 'No valid rows found (ensure "title" column is present).' }
 
-  // Upsert on ISBN if provided, otherwise insert fresh rows
-  const withIsbn = clean.filter(r => r.isbn)
-  const withoutIsbn = clean.filter(r => !r.isbn)
-
   let totalImported = 0
 
-  if (withIsbn.length) {
-    const { error, count } = await supabase
-      .from('books')
-      .upsert(withIsbn, { onConflict: 'isbn', ignoreDuplicates: false, count: 'exact' })
-    if (error) return { imported: 0, error: error.message }
-    totalImported += count ?? withIsbn.length
-  }
-
-  if (withoutIsbn.length) {
-    const { error, count } = await supabase
-      .from('books')
-      .insert(withoutIsbn, { count: 'exact' })
-    if (error) return { imported: 0, error: error.message }
-    totalImported += count ?? withoutIsbn.length
+  try {
+    for (const book of clean) {
+      if (book.isbn) {
+        // Upsert by ISBN
+        const existing = await db.find({ selector: { type: 'book', isbn: book.isbn } })
+        if (existing.docs.length > 0) {
+          const doc = existing.docs[0] as unknown as PouchDB.Core.ExistingDocument<Record<string, unknown>>
+          await db.put({ ...doc, ...book, _id: doc._id, _rev: doc._rev })
+        } else {
+          await db.put({ ...book, _id: `book_${Date.now()}_${Math.random().toString(36).substr(2, 5)}` })
+        }
+      } else {
+        await db.post(book)
+      }
+      totalImported++
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { imported: totalImported, error: message }
   }
 
   revalidatePath('/catalog')

@@ -1,29 +1,80 @@
-import { createClient } from '@/utils/supabase/server'
+import { getSession, getAdminDb } from '@/lib/auth/couchdb'
 import { redirect } from 'next/navigation'
 // import { BookOpen } from 'lucide-react'
 import AddBookModal from './AddBookModal'
 import EditBookModal from './EditBookModal'
 import DeleteBookButton from './DeleteBookButton'
 
+
+
 export default async function BooksAdminPage() {
-  const supabase = await createClient()
+  const session = await getSession()
+  const userId = session?.userCtx?.name
+  if (!userId) redirect('/login')
 
-  // Verify caller is admin/staff
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  const db = await getAdminDb()
+  const roles = session?.userCtx?.roles || []
+  let role = roles[0] || 'borrower'
 
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  const role = profile?.role || 'borrower'
+  if (!['super_admin', 'librarian', 'circulation_assistant'].some(r => roles.includes(r))) {
+    try {
+      const profileDocs = await db.find({ selector: { type: 'profile', user_id: userId } })
+      if (profileDocs.docs.length > 0) {
+        const firstDoc = profileDocs.docs[0] as unknown as Record<string, unknown>
+        role = String(firstDoc?.role ?? 'borrower')
+      }
+    } catch {
+      // Non-critical: fall through
+    }
+  }
   
   if (role !== 'super_admin' && role !== 'librarian' && role !== 'circulation_assistant') {
     redirect('/')
   }
 
-  // Fetch current catalog
-  const { data: books, error } = await supabase
-    .from('books')
-    .select('*')
-    .order('created_at', { ascending: false })
+  type BookRow = {
+    id: string
+    title: string
+    author: string | null
+    isbn: string | null
+    publisher: string | null
+    publication_year: number | null
+    description: string | null
+    cover_image_url: string | null
+    total_copies: number
+    available_copies: number
+    ddc_call_number: string | null
+    genre: string | null
+    page_count: number | null
+    language: string | null
+    created_at?: string
+  }
+  let books: BookRow[] = []
+  let error: string | null = null
+  try {
+    const res = await db.find({ 
+      selector: { type: 'book' }
+    })
+    books = (res.docs as unknown as (Record<string, unknown> & { _id: string })[]).map(doc => ({
+      id: doc._id,
+      title: String(doc.title ?? ''),
+      author: doc.author != null ? String(doc.author) : null,
+      isbn: doc.isbn != null ? String(doc.isbn) : null,
+      publisher: doc.publisher != null ? String(doc.publisher) : null,
+      publication_year: doc.publication_year != null ? Number(doc.publication_year) : null,
+      description: doc.description != null ? String(doc.description) : null,
+      cover_image_url: doc.cover_image_url != null ? String(doc.cover_image_url) : null,
+      total_copies: Number(doc.total_copies ?? 0),
+      available_copies: Number(doc.available_copies ?? 0),
+      ddc_call_number: doc.ddc_call_number != null ? String(doc.ddc_call_number) : null,
+      genre: doc.genre != null ? String(doc.genre) : null,
+      page_count: doc.page_count != null ? Number(doc.page_count) : null,
+      language: doc.language != null ? String(doc.language) : null,
+      created_at: doc.created_at != null ? String(doc.created_at) : undefined,
+    })).sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+  } catch (err: unknown) {
+    error = err instanceof Error ? err.message : String(err)
+  }
 
   return (
     <div className="min-h-screen bg-slate-50/50 pb-12">
